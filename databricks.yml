@@ -1,41 +1,45 @@
 bundle:
   name: appkit-lakebase
 
+# ---------------------------------------------------------------------------
+# Variables
+#   default target (production):  postgres_branch / postgres_database
+#   preview target (per-PR):      app_name / pr_number / git_sha / lakebase_*
+#                                 (all supplied by GitHub Actions at deploy time)
+# ---------------------------------------------------------------------------
 variables:
+  # --- production app ---
   postgres_branch:
-    description: Full Lakebase Postgres branch resource name. Obtain by running `databricks postgres list-branches {project-name}`, select the desired item from the output array and use its .name value. Requires the project resource name.
+    description: Full Lakebase Postgres branch resource name for the production app.
+    default: projects/appkit-lakebase-db/branches/production
   postgres_database:
-    description: Full Lakebase Postgres database resource name. Obtain by running `databricks postgres list-databases {branch-name}`, select the desired item from the output array and use its .name value. Requires the branch resource name.
+    description: Full Lakebase Postgres database resource name for the production app.
+    default: projects/appkit-lakebase-db/branches/production/databases/databricks-postgres
 
-resources:
-  apps:
-    app:
-      name: "appkit-lakebase"
-      description: "Node.js app with Lakebase Autoscaling (Postgres) CRUD operations"
-
-      # This workspace requires apps to be backed by a Git repository.
-      git_repository:
-        provider: gitHub
-        url: https://github.com/tgourdel-dbx/my-appkit-lakebase.git
-      git_source:
-        branch: main
-
-      # Start the app automatically on deploy.
-      lifecycle:
-        started: true
-      # Uncomment to enable on behalf of user API scopes. Available scopes: sql, dashboards.genie, files.files, serving.serving-endpoints
-      # user_api_scopes:
-      #   - sql
-
-      # The resources which this app has access to.
-      resources:
-        - name: postgres
-          postgres:
-            branch: ${var.postgres_branch}
-            database: ${var.postgres_database}
-            permission: CAN_CONNECT_AND_CREATE
+  # --- preview apps (set per-PR by GitHub Actions) ---
+  app_name:
+    description: Preview Databricks App name, e.g. appkit-lakebase-pr-123 (<= 26 chars).
+    default: appkit-lakebase-pr-0
+  pr_number:
+    description: GitHub pull request number.
+    default: "0"
+  git_sha:
+    description: Exact PR head commit SHA to deploy for the preview app.
+    default: main
+  lakebase_project_id:
+    description: Lakebase project id that owns preview branches.
+    default: appkit-lakebase-db
+  lakebase_branch:
+    description: Lakebase branch id for this preview (derived from the git branch).
+    default: production
+  lakebase_database_id:
+    description: Lakebase database resource id.
+    default: databricks-postgres
 
 targets:
+  # -------------------------------------------------------------------------
+  # PRODUCTION — the long-lived app, deployed from main. This is the default.
+  # -------------------------------------------------------------------------
   default:
     default: true
     workspace:
@@ -44,3 +48,62 @@ targets:
     variables:
       postgres_branch: projects/appkit-lakebase-db/branches/production
       postgres_database: projects/appkit-lakebase-db/branches/production/databases/databricks-postgres
+
+    resources:
+      apps:
+        app:
+          name: "appkit-lakebase"
+          description: "Node.js app with Lakebase Autoscaling (Postgres) CRUD operations"
+
+          # This workspace requires apps to be backed by a Git repository.
+          git_repository:
+            provider: gitHub
+            url: https://github.com/tgourdel-dbx/my-appkit-lakebase.git
+          git_source:
+            branch: main
+
+          # Start the app automatically on deploy.
+          lifecycle:
+            started: true
+
+          # The resources which this app has access to.
+          resources:
+            - name: postgres
+              postgres:
+                branch: ${var.postgres_branch}
+                database: ${var.postgres_database}
+                permission: CAN_CONNECT_AND_CREATE
+
+  # -------------------------------------------------------------------------
+  # PREVIEW — one ephemeral app per PR, deployed at the exact PR commit and
+  # bound to a per-PR Lakebase branch. Created/destroyed by GitHub Actions.
+  # -------------------------------------------------------------------------
+  preview:
+    workspace:
+      host: https://data-ai-lakehouse.cloud.databricks.com
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/pr-${var.pr_number}
+
+    resources:
+      apps:
+        preview_app:
+          name: ${var.app_name}
+          description: "PR ${var.pr_number} preview"
+
+          # Git-backed (required in this workspace); deploy the exact PR commit.
+          git_repository:
+            provider: gitHub
+            url: https://github.com/tgourdel-dbx/my-appkit-lakebase.git
+          git_source:
+            commit: ${var.git_sha}
+
+          lifecycle:
+            started: true
+
+          # NOTE: resource name MUST be "postgres" — app.yaml injects
+          # LAKEBASE_ENDPOINT via `valueFrom: postgres`.
+          resources:
+            - name: postgres
+              postgres:
+                branch: projects/${var.lakebase_project_id}/branches/${var.lakebase_branch}
+                database: projects/${var.lakebase_project_id}/branches/${var.lakebase_branch}/databases/${var.lakebase_database_id}
+                permission: CAN_CONNECT_AND_CREATE

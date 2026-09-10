@@ -1,9 +1,15 @@
 .DS_Store
+
+# Claude Code worktrees (each has its own Lakebase branch)
+.claude/worktrees/
+
 node_modules/
 client/dist/
 dist/
 build/
 .env
+.env.local
+.env.*.local
 .databricks/
 .smoke-test/
 test-results/

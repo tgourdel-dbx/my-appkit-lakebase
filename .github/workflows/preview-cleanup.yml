@@ -1,0 +1,64 @@
+name: Cleanup PR Preview
+
+on:
+  pull_request:
+    types:
+      - closed
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    environment: preview
+
+    env:
+      DATABRICKS_AUTH_TYPE: github-oidc
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+
+      LAKEBASE_PROJECT_ID: ${{ vars.LAKEBASE_PROJECT_ID }}
+      LAKEBASE_DATABASE_ID: ${{ vars.LAKEBASE_DATABASE_ID }}
+
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      GIT_BRANCH: ${{ github.event.pull_request.head.ref }}
+      GIT_SHA: ${{ github.event.pull_request.head.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: databricks/setup-cli@main
+
+      - name: Compute names
+        id: preview
+        shell: bash
+        run: |
+          LAKEBASE_BRANCH="$(bash scripts/branch-name.sh "$GIT_BRANCH")"
+          echo "branch=$LAKEBASE_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "app=appkit-lakebase-pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Destroy preview app
+        continue-on-error: true
+        run: |
+          databricks bundle destroy \
+            --target preview \
+            --auto-approve \
+            --var="pr_number=${PR_NUMBER}" \
+            --var="app_name=${{ steps.preview.outputs.app }}" \
+            --var="git_sha=${GIT_SHA}" \
+            --var="lakebase_project_id=${LAKEBASE_PROJECT_ID}" \
+            --var="lakebase_branch=${{ steps.preview.outputs.branch }}" \
+            --var="lakebase_database_id=${LAKEBASE_DATABASE_ID}"
+
+      - name: Delete Lakebase branch
+        shell: bash
+        run: |
+          BRANCH="projects/${LAKEBASE_PROJECT_ID}/branches/${{ steps.preview.outputs.branch }}"
+
+          if databricks postgres get-branch "$BRANCH" >/dev/null 2>&1; then
+            databricks postgres delete-branch "$BRANCH"
+          else
+            echo "Lakebase branch already deleted."
+          fi

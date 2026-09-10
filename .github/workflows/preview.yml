@@ -1,0 +1,123 @@
+name: PR Preview
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: databricks-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: preview
+
+    env:
+      # Databricks auth via GitHub OIDC / workload identity federation (no secret).
+      DATABRICKS_AUTH_TYPE: github-oidc
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+
+      LAKEBASE_PROJECT_ID: ${{ vars.LAKEBASE_PROJECT_ID }}
+      LAKEBASE_DATABASE_ID: ${{ vars.LAKEBASE_DATABASE_ID }}
+
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      GIT_BRANCH: ${{ github.event.pull_request.head.ref }}
+      GIT_SHA: ${{ github.event.pull_request.head.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: databricks/setup-cli@main
+
+      - name: Compute preview names
+        id: preview
+        shell: bash
+        run: |
+          LAKEBASE_BRANCH="$(bash scripts/branch-name.sh "$GIT_BRANCH")"
+
+          # Databricks App names must be <= 26 chars, lowercase/hyphen only.
+          APP_NAME="appkit-lakebase-pr-${PR_NUMBER}"
+
+          echo "branch=$LAKEBASE_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "app=$APP_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure Lakebase branch exists
+        shell: bash
+        run: |
+          BRANCH="projects/${LAKEBASE_PROJECT_ID}/branches/${{ steps.preview.outputs.branch }}"
+
+          if ! databricks postgres get-branch "$BRANCH" >/dev/null 2>&1; then
+            databricks postgres create-branch \
+              "projects/${LAKEBASE_PROJECT_ID}" \
+              "${{ steps.preview.outputs.branch }}" \
+              --json "{
+                \"spec\": {
+                  \"source_branch\": \"projects/${LAKEBASE_PROJECT_ID}/branches/production\",
+                  \"no_expiry\": true
+                }
+              }"
+          fi
+
+      - name: Validate bundle
+        run: |
+          databricks bundle validate \
+            --target preview \
+            --var="pr_number=${PR_NUMBER}" \
+            --var="app_name=${{ steps.preview.outputs.app }}" \
+            --var="git_sha=${GIT_SHA}" \
+            --var="lakebase_project_id=${LAKEBASE_PROJECT_ID}" \
+            --var="lakebase_branch=${{ steps.preview.outputs.branch }}" \
+            --var="lakebase_database_id=${LAKEBASE_DATABASE_ID}"
+
+      - name: Deploy preview
+        run: |
+          databricks bundle deploy \
+            --target preview \
+            --var="pr_number=${PR_NUMBER}" \
+            --var="app_name=${{ steps.preview.outputs.app }}" \
+            --var="git_sha=${GIT_SHA}" \
+            --var="lakebase_project_id=${LAKEBASE_PROJECT_ID}" \
+            --var="lakebase_branch=${{ steps.preview.outputs.branch }}" \
+            --var="lakebase_database_id=${LAKEBASE_DATABASE_ID}"
+
+      # `bundle deploy` alone does not (re)start the app on a new commit.
+      - name: Start / restart preview app
+        run: |
+          databricks bundle run preview_app \
+            --target preview \
+            --var="pr_number=${PR_NUMBER}" \
+            --var="app_name=${{ steps.preview.outputs.app }}" \
+            --var="git_sha=${GIT_SHA}" \
+            --var="lakebase_project_id=${LAKEBASE_PROJECT_ID}" \
+            --var="lakebase_branch=${{ steps.preview.outputs.branch }}" \
+            --var="lakebase_database_id=${LAKEBASE_DATABASE_ID}"
+
+      - name: Get preview URL
+        id: url
+        shell: bash
+        run: |
+          URL="$(databricks apps get "${{ steps.preview.outputs.app }}" --output json | jq -r '.url')"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Comment preview URL on PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "$PR_NUMBER" \
+            --body "Databricks preview: ${{ steps.url.outputs.url }}
+
+          Commit: \`${GIT_SHA}\`
+          Lakebase branch: \`${{ steps.preview.outputs.branch }}\`"
