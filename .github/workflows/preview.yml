@@ -93,7 +93,36 @@ jobs:
             --var="lakebase_branch=${{ steps.preview.outputs.branch }}" \
             --var="lakebase_database_id=${LAKEBASE_DATABASE_ID}"
 
+      # The preview branch is a copy-on-write clone of production, so the `app`
+      # schema it inherits is owned by production's service principal. The
+      # preview app runs as its OWN service principal, which therefore cannot
+      # write to or migrate that schema. Reassign ownership of the schema (and
+      # its objects) to the preview app's SP, on this branch only. This must run
+      # as a role with superuser on the project (the CI SP needs databricks_superuser).
+      - name: Bootstrap preview schema ownership
+        shell: bash
+        env:
+          PREVIEW_APP: ${{ steps.preview.outputs.app }}
+          LAKEBASE_BRANCH: ${{ steps.preview.outputs.branch }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          EP="projects/${LAKEBASE_PROJECT_ID}/branches/${LAKEBASE_BRANCH}/endpoints/primary"
+          HOST="$(databricks postgres get-endpoint "$EP" --output json | jq -r '.status.hosts.host')"
+          TOKEN="$(databricks postgres generate-database-credential "$EP" --output json | jq -r '.token')"
+          PREVIEW_SP="$(databricks apps get "$PREVIEW_APP" --output json | jq -r '.service_principal_client_id')"
+
+          # Connect as the CI service principal (its client id is its Postgres role).
+          PGPASSWORD="$TOKEN" psql \
+            "host=$HOST user=${DATABRICKS_CLIENT_ID} dbname=databricks_postgres sslmode=require" \
+            -v ON_ERROR_STOP=1 <<SQL
+          ALTER SCHEMA app OWNER TO "$PREVIEW_SP";
+          ALTER TABLE IF EXISTS app.todos OWNER TO "$PREVIEW_SP";
+          ALTER SEQUENCE IF EXISTS app.todos_id_seq OWNER TO "$PREVIEW_SP";
+          SQL
+
       # `bundle deploy` alone does not (re)start the app on a new commit.
+      # Restarting here also re-runs the app's startup migration, which now
+      # succeeds because the preview SP owns the schema (see previous step).
       - name: Start / restart preview app
         run: |
           databricks bundle run preview_app \
