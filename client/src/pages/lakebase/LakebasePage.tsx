@@ -10,10 +10,25 @@ import {
 import { useState, useEffect } from 'react';
 import { Check, X } from 'lucide-react';
 
+type Priority = 'low' | 'medium' | 'high';
+
+const PRIORITY_ORDER: Priority[] = ['low', 'medium', 'high'];
+
+const PRIORITY_STYLES: Record<Priority, string> = {
+  low: 'bg-muted text-muted-foreground border-transparent',
+  medium: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
+  high: 'bg-destructive/10 text-destructive border-destructive/20',
+};
+
+// Cycle low -> medium -> high -> low
+const nextPriority = (p: Priority): Priority =>
+  PRIORITY_ORDER[(PRIORITY_ORDER.indexOf(p) + 1) % PRIORITY_ORDER.length];
+
 interface Todo {
   id: number;
   title: string;
   completed: boolean;
+  priority: Priority;
   created_at: string;
 }
 
@@ -66,6 +81,22 @@ export function LakebasePage() {
       setTodos((prev) => prev.map((t) => (t.id === id ? updated : t)));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update todo');
+    }
+  };
+
+  const cyclePriority = async (id: number, current: Priority) => {
+    const priority = nextPriority(current);
+    try {
+      const res = await fetch(`/api/lakebase/todos/${id}/priority`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priority }),
+      });
+      if (!res.ok) throw new Error(`Failed to update priority: ${res.statusText}`);
+      const updated = (await res.json()) as Todo;
+      setTodos((prev) => prev.map((t) => (t.id === id ? updated : t)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update priority');
     }
   };
 
@@ -151,6 +182,16 @@ export function LakebasePage() {
                   <span className={`flex-1 ${todo.completed ? 'line-through text-muted-foreground' : ''}`}>
                     {todo.title}
                   </span>
+
+                  <button
+                    type="button"
+                    onClick={() => cyclePriority(todo.id, todo.priority)}
+                    className={`text-xs font-medium capitalize px-2 py-0.5 rounded-full border shrink-0 transition-colors ${PRIORITY_STYLES[todo.priority]}`}
+                    aria-label={`Priority: ${todo.priority}. Click to change.`}
+                    title="Click to change priority"
+                  >
+                    {todo.priority}
+                  </button>
 
                   <Button
                     variant="ghost"

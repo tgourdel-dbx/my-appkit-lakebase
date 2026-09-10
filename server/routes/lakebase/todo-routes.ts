@@ -25,11 +25,25 @@ const CREATE_TABLE_SQL = `
     id SERIAL PRIMARY KEY,
     title TEXT NOT NULL,
     completed BOOLEAN NOT NULL DEFAULT false,
+    priority TEXT NOT NULL DEFAULT 'medium',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )
 `;
 
-const CreateTodoBody = z.object({ title: z.string().min(1) });
+// Idempotent migration so branches whose table predates the priority column
+// pick it up on startup without a destructive rebuild.
+const ADD_PRIORITY_COLUMN_SQL = `
+  ALTER TABLE app.todos ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'medium'
+`;
+
+const PRIORITIES = ['low', 'medium', 'high'] as const;
+
+const CreateTodoBody = z.object({
+  title: z.string().min(1),
+  priority: z.enum(PRIORITIES).optional(),
+});
+
+const UpdatePriorityBody = z.object({ priority: z.enum(PRIORITIES) });
 
 export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
   try {
@@ -41,6 +55,8 @@ export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
       await appkit.lakebase.query(CREATE_TABLE_SQL);
       console.log('[lakebase] Created schema and table app.todos');
     }
+    // Always apply lightweight, idempotent column migrations.
+    await appkit.lakebase.query(ADD_PRIORITY_COLUMN_SQL);
   } catch (err) {
     console.warn('[lakebase] Database setup failed:', (err as Error).message);
     console.warn('[lakebase] Routes will be registered but may return errors');
@@ -51,7 +67,7 @@ export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
     app.get('/api/lakebase/todos', async (_req, res) => {
       try {
         const result = await appkit.lakebase.query(
-          'SELECT id, title, completed, created_at FROM app.todos ORDER BY created_at DESC',
+          'SELECT id, title, completed, priority, created_at FROM app.todos ORDER BY created_at DESC',
         );
         res.json(result.rows);
       } catch (err) {
@@ -68,8 +84,8 @@ export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
           return;
         }
         const result = await appkit.lakebase.query(
-          'INSERT INTO app.todos (title) VALUES ($1) RETURNING id, title, completed, created_at',
-          [parsed.data.title.trim()],
+          'INSERT INTO app.todos (title, priority) VALUES ($1, $2) RETURNING id, title, completed, priority, created_at',
+          [parsed.data.title.trim(), parsed.data.priority ?? 'medium'],
         );
         res.status(201).json(result.rows[0]);
       } catch (err) {
@@ -86,7 +102,7 @@ export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
           return;
         }
         const result = await appkit.lakebase.query(
-          'UPDATE app.todos SET completed = NOT completed WHERE id = $1 RETURNING id, title, completed, created_at',
+          'UPDATE app.todos SET completed = NOT completed WHERE id = $1 RETURNING id, title, completed, priority, created_at',
           [id],
         );
         if (result.rows.length === 0) {
@@ -97,6 +113,33 @@ export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
       } catch (err) {
         console.error('Failed to update todo:', err);
         res.status(500).json({ error: 'Failed to update todo' });
+      }
+    });
+
+    app.patch('/api/lakebase/todos/:id/priority', async (req, res) => {
+      try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) {
+          res.status(400).json({ error: 'Invalid id' });
+          return;
+        }
+        const parsed = UpdatePriorityBody.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ error: 'priority must be one of: low, medium, high' });
+          return;
+        }
+        const result = await appkit.lakebase.query(
+          'UPDATE app.todos SET priority = $1 WHERE id = $2 RETURNING id, title, completed, priority, created_at',
+          [parsed.data.priority, id],
+        );
+        if (result.rows.length === 0) {
+          res.status(404).json({ error: 'Todo not found' });
+          return;
+        }
+        res.json(result.rows[0]);
+      } catch (err) {
+        console.error('Failed to update priority:', err);
+        res.status(500).json({ error: 'Failed to update priority' });
       }
     });
 
