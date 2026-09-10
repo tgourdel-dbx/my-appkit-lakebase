@@ -12,7 +12,13 @@ resources:
     app:
       name: "appkit-lakebase"
       description: "Node.js app with Lakebase Autoscaling (Postgres) CRUD operations"
-      source_code_path: ./
+
+      # This workspace requires apps to be backed by a Git repository.
+      git_repository:
+        provider: gitHub
+        url: https://github.com/tgourdel-dbx/my-appkit-lakebase.git
+      git_source:
+        branch: main
 
       # Start the app automatically on deploy.
       lifecycle:
@@ -33,8 +39,8 @@ targets:
   default:
     default: true
     workspace:
-      host: https://your-workspace.cloud.databricks.com
+      host: https://data-ai-lakehouse.cloud.databricks.com
 
     variables:
-      postgres_branch: placeholder
-      postgres_database: placeholder
+      postgres_branch: projects/appkit-lakebase-db/branches/production
+      postgres_database: projects/appkit-lakebase-db/branches/production/databases/databricks-postgres
