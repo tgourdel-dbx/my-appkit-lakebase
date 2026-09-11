@@ -3,6 +3,9 @@
 # Claude Code worktrees (each has its own Lakebase branch)
 .claude/worktrees/
 
+# Isaac
+.isaac/
+
 node_modules/
 client/dist/
 dist/
