@@ -3,6 +3,7 @@
 
 import { z } from 'zod';
 import { Application } from 'express';
+import { runMigrations } from './migrations';
 
 interface AppKitWithLakebase {
   lakebase: {
@@ -13,34 +14,31 @@ interface AppKitWithLakebase {
   };
 }
 
-const TABLE_EXISTS_SQL = `
-  SELECT 1 FROM information_schema.tables
-  WHERE table_schema = 'app' AND table_name = 'todos'
-`;
+// Columns returned by every todo endpoint. `due_date` is a DATE; format it as a
+// plain YYYY-MM-DD string so the client isn't handed a timezone-shifted Date.
+const TODO_COLUMNS = `id, title, completed, priority, to_char(due_date, 'YYYY-MM-DD') AS due_date, created_at`;
 
-const SETUP_SCHEMA_SQL = `CREATE SCHEMA IF NOT EXISTS app`;
+const Priority = z.enum(['low', 'medium', 'high']);
+// A calendar date (YYYY-MM-DD) or null to clear it.
+const DueDate = z.iso.date().nullable();
 
-const CREATE_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS app.todos (
-    id SERIAL PRIMARY KEY,
-    title TEXT NOT NULL,
-    completed BOOLEAN NOT NULL DEFAULT false,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  )
-`;
+const CreateTodoBody = z.object({
+  title: z.string().trim().min(1),
+  priority: Priority.optional(),
+  due_date: DueDate.optional(),
+});
 
-const CreateTodoBody = z.object({ title: z.string().min(1) });
+const UpdateTodoBody = z.object({
+  title: z.string().trim().min(1).optional(),
+  completed: z.boolean().optional(),
+  priority: Priority.optional(),
+  due_date: DueDate.optional(),
+});
 
 export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
   try {
-    const { rows } = await appkit.lakebase.query(TABLE_EXISTS_SQL);
-    if (rows.length > 0) {
-      console.log('[lakebase] Table app.todos already exists, skipping setup');
-    } else {
-      await appkit.lakebase.query(SETUP_SCHEMA_SQL);
-      await appkit.lakebase.query(CREATE_TABLE_SQL);
-      console.log('[lakebase] Created schema and table app.todos');
-    }
+    await runMigrations((text, params) => appkit.lakebase.query(text, params));
+    console.log('[lakebase] Schema migrations up to date');
   } catch (err) {
     console.warn('[lakebase] Database setup failed:', (err as Error).message);
     console.warn('[lakebase] Routes will be registered but may return errors');
@@ -51,7 +49,7 @@ export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
     app.get('/api/lakebase/todos', async (_req, res) => {
       try {
         const result = await appkit.lakebase.query(
-          'SELECT id, title, completed, created_at FROM app.todos ORDER BY created_at DESC',
+          `SELECT ${TODO_COLUMNS} FROM app.todos ORDER BY completed ASC, due_date ASC NULLS LAST, created_at DESC`,
         );
         res.json(result.rows);
       } catch (err) {
@@ -67,9 +65,12 @@ export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
           res.status(400).json({ error: 'title is required' });
           return;
         }
+        const { title, priority, due_date } = parsed.data;
         const result = await appkit.lakebase.query(
-          'INSERT INTO app.todos (title) VALUES ($1) RETURNING id, title, completed, created_at',
-          [parsed.data.title.trim()],
+          `INSERT INTO app.todos (title, priority, due_date)
+           VALUES ($1, COALESCE($2, 'medium'), $3)
+           RETURNING ${TODO_COLUMNS}`,
+          [title, priority ?? null, due_date ?? null],
         );
         res.status(201).json(result.rows[0]);
       } catch (err) {
@@ -85,9 +86,31 @@ export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
           res.status(400).json({ error: 'Invalid id' });
           return;
         }
+
+        const parsed = UpdateTodoBody.safeParse(req.body ?? {});
+        if (!parsed.success) {
+          res.status(400).json({ error: 'Invalid update' });
+          return;
+        }
+
+        const sets: string[] = [];
+        const values: unknown[] = [];
+        for (const [column, value] of Object.entries(parsed.data)) {
+          if (value === undefined) continue;
+          sets.push(`${column} = $${values.length + 1}`);
+          values.push(value);
+        }
+
+        // No fields provided: toggle completion (keeps the checkbox working with
+        // an empty PATCH body).
+        if (sets.length === 0) {
+          sets.push('completed = NOT completed');
+        }
+
+        values.push(id);
         const result = await appkit.lakebase.query(
-          'UPDATE app.todos SET completed = NOT completed WHERE id = $1 RETURNING id, title, completed, created_at',
-          [id],
+          `UPDATE app.todos SET ${sets.join(', ')} WHERE id = $${values.length} RETURNING ${TODO_COLUMNS}`,
+          values,
         );
         if (result.rows.length === 0) {
           res.status(404).json({ error: 'Todo not found' });
