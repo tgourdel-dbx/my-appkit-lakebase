@@ -1,8 +1,10 @@
 import { describe, expect, test, vi } from 'vitest';
-import type { Application, Request, Response } from 'express';
+import type { Application } from 'express';
 import { setupSampleLakebaseRoutes } from './todo-routes';
 
-type Handler = (req: Partial<Request>, res: Partial<Response>) => unknown;
+// Captured route handlers are invoked with plain fake req/res objects, so the
+// parameters are intentionally loose (unknown) to avoid casting at call sites.
+type Handler = (req: unknown, res: unknown) => unknown;
 
 /**
  * Builds a fake AppKit + Express app that captures the registered route
@@ -13,17 +15,19 @@ function buildHarness(queryImpl: (text: string, params?: unknown[]) => Promise<{
   const calls: { text: string; params?: unknown[] }[] = [];
   const routes = new Map<string, Handler>();
 
-  const query = vi.fn(async (text: string, params?: unknown[]) => {
+  const query = vi.fn((text: string, params?: unknown[]) => {
     calls.push({ text, params });
     return queryImpl(text, params);
   });
 
-  const app = {
+  // Minimal Express-app stand-in: records handlers by `${method} ${path}`.
+  const appLike: unknown = {
     get: (path: string, h: Handler) => routes.set(`get ${path}`, h),
     post: (path: string, h: Handler) => routes.set(`post ${path}`, h),
     patch: (path: string, h: Handler) => routes.set(`patch ${path}`, h),
     delete: (path: string, h: Handler) => routes.set(`delete ${path}`, h),
-  } as unknown as Application;
+  };
+  const app = appLike as Application;
 
   const appkit = {
     lakebase: { query },
@@ -34,7 +38,7 @@ function buildHarness(queryImpl: (text: string, params?: unknown[]) => Promise<{
 }
 
 function mockRes() {
-  const res = {
+  return {
     statusCode: 200,
     body: undefined as unknown,
     status(code: number) {
@@ -49,7 +53,6 @@ function mockRes() {
       return this;
     },
   };
-  return res;
 }
 
 describe('PATCH /api/lakebase/todos/:id', () => {
@@ -60,7 +63,7 @@ describe('PATCH /api/lakebase/todos/:id', () => {
 
     const handler = routes.get('patch /api/lakebase/todos/:id')!;
     const res = mockRes();
-    await handler({ params: { id: '1' }, body: {} }, res as unknown as Response);
+    await handler({ params: { id: '1' }, body: {} }, res);
 
     const updateCall = calls.find((c) => c.text.includes('UPDATE'))!;
     expect(updateCall.text).toContain('SET completed = NOT completed');
@@ -76,7 +79,7 @@ describe('PATCH /api/lakebase/todos/:id', () => {
 
     const handler = routes.get('patch /api/lakebase/todos/:id')!;
     const res = mockRes();
-    await handler({ params: { id: '1' }, body: { title: '  new  ' } }, res as unknown as Response);
+    await handler({ params: { id: '1' }, body: { title: '  new  ' } }, res);
 
     const updateCall = calls.find((c) => c.text.includes('UPDATE'))!;
     expect(updateCall.text).toContain('SET title = $1');
@@ -91,10 +94,7 @@ describe('PATCH /api/lakebase/todos/:id', () => {
 
     const handler = routes.get('patch /api/lakebase/todos/:id')!;
     const res = mockRes();
-    await handler(
-      { params: { id: '1' }, body: { title: 'new', completed: true } },
-      res as unknown as Response,
-    );
+    await handler({ params: { id: '1' }, body: { title: 'new', completed: true } }, res);
 
     const updateCall = calls.find((c) => c.text.includes('UPDATE'))!;
     expect(updateCall.text).toContain('SET title = $1, completed = $2');
@@ -108,7 +108,7 @@ describe('PATCH /api/lakebase/todos/:id', () => {
 
     const handler = routes.get('patch /api/lakebase/todos/:id')!;
     const res = mockRes();
-    await handler({ params: { id: '1' }, body: { title: '' } }, res as unknown as Response);
+    await handler({ params: { id: '1' }, body: { title: '' } }, res);
 
     expect(res.statusCode).toBe(400);
     expect(calls.some((c) => c.text.includes('UPDATE'))).toBe(false);
@@ -120,7 +120,7 @@ describe('PATCH /api/lakebase/todos/:id', () => {
 
     const handler = routes.get('patch /api/lakebase/todos/:id')!;
     const res = mockRes();
-    await handler({ params: { id: '999' }, body: { title: 'x' } }, res as unknown as Response);
+    await handler({ params: { id: '999' }, body: { title: 'x' } }, res);
 
     expect(res.statusCode).toBe(404);
   });
