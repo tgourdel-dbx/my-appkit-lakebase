@@ -1,7 +1,11 @@
 # Development workflow
 
-This repository uses Git worktrees, Lakebase database branches, GitHub pull
-requests, and Databricks Apps preview environments.
+This repository uses Git worktrees, Lakebase database branches, and GitHub
+pull requests.
+
+Each Claude worktree session works on its own Git branch and a matching
+Lakebase Postgres branch (a copy-on-write clone of production), then opens a
+pull request. There is no per-PR Databricks Apps preview environment.
 
 ## Feature development
 
@@ -15,10 +19,12 @@ branch assigned to this worktree. Only modify that Lakebase branch.
 
 Never connect directly to or modify the production Lakebase branch
 (`production`). Never use production database credentials. Never delete
-Lakebase branches.
+Lakebase branches manually. This worktree's branch is cleaned up
+automatically: the `Cleanup Lakebase Branch` GitHub Action deletes it when
+its PR is closed, and a 30-day TTL reclaims it as a safety net if no PR is
+ever opened.
 
-Never create or delete Databricks Apps manually. GitHub Actions owns the
-preview application lifecycle.
+Never create or delete Databricks Apps manually.
 
 ## Database changes
 
@@ -86,11 +92,10 @@ Then push all final commits and verify:
 
     gh pr checks
 
-Report the PR URL when complete. Opening the draft PR triggers the
-`PR Preview` GitHub Action, which deploys `appkit-lakebase-pr-<N>` from the
-exact PR commit, bound to this worktree's Lakebase branch, and comments the
-preview URL on the PR. Closing/merging the PR triggers `Cleanup PR Preview`,
-which destroys the app and deletes the Lakebase branch.
+Report the PR URL when complete. Closing or merging the PR triggers the
+`Cleanup Lakebase Branch` GitHub Action, which deletes this worktree's
+Lakebase branch. If a PR is never opened, the branch's 30-day TTL reclaims
+it as a backstop.
 
 <!-- appkit-instructions-start -->
 ## Databricks AppKit

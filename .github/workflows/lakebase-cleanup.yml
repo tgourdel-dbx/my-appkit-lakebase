@@ -1,0 +1,50 @@
+name: Cleanup Lakebase Branch
+
+# When a PR is closed (merged or not), delete the per-PR Lakebase branch that
+# the Claude worktree session created for it. There is no Databricks App to
+# tear down — this repo no longer deploys per-PR preview apps.
+on:
+  pull_request:
+    types:
+      - closed
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+
+    env:
+      # Databricks auth via OAuth M2M (service principal client id + secret).
+      DATABRICKS_AUTH_TYPE: oauth-m2m
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+
+      LAKEBASE_PROJECT_ID: ${{ vars.LAKEBASE_PROJECT_ID }}
+
+      GIT_BRANCH: ${{ github.event.pull_request.head.ref }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: databricks/setup-cli@main
+
+      - name: Compute Lakebase branch id
+        id: lakebase
+        shell: bash
+        run: |
+          LAKEBASE_BRANCH="$(bash scripts/branch-name.sh "$GIT_BRANCH")"
+          echo "branch=$LAKEBASE_BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Delete Lakebase branch
+        shell: bash
+        run: |
+          BRANCH="projects/${LAKEBASE_PROJECT_ID}/branches/${{ steps.lakebase.outputs.branch }}"
+
+          if databricks postgres get-branch "$BRANCH" >/dev/null 2>&1; then
+            databricks postgres delete-branch "$BRANCH"
+          else
+            echo "Lakebase branch already deleted."
+          fi

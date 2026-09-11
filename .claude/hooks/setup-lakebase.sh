@@ -51,19 +51,28 @@ DATABASE="${BRANCH}/databases/${LAKEBASE_DATABASE_ID}"
 
 # ---------------------------------------------------------
 # CREATE PREVIEW BRANCH IF IT DOES NOT EXIST
-# (no_expiry: GitHub Actions owns deletion on PR close)
+#
+# Cleanup is belt-and-suspenders:
+#   - The `Cleanup Lakebase Branch` GitHub Action deletes this branch
+#     promptly when its PR is closed (the normal path).
+#   - The 30-day TTL is a safety net that reclaims branches whose PR is
+#     never opened. It is a fixed deadline from creation (Lakebase does not
+#     support extending a branch's TTL), so it is set well beyond the life
+#     of a feature branch to avoid deleting active work.
 # ---------------------------------------------------------
+LAKEBASE_TTL="${LAKEBASE_TTL:-2592000s}"  # 30 days (Lakebase max)
+
 if databricks postgres get-branch "$BRANCH" >/dev/null 2>&1; then
   echo "Lakebase branch already exists: $LAKEBASE_BRANCH"
 else
-  echo "Creating Lakebase branch: $LAKEBASE_BRANCH"
+  echo "Creating Lakebase branch: $LAKEBASE_BRANCH (ttl: $LAKEBASE_TTL)"
   databricks postgres create-branch \
     "$PROJECT" \
     "$LAKEBASE_BRANCH" \
     --json "{
       \"spec\": {
         \"source_branch\": \"${PARENT}\",
-        \"no_expiry\": true
+        \"ttl\": \"${LAKEBASE_TTL}\"
       }
     }"
 fi
