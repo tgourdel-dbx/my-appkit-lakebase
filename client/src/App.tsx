@@ -1,11 +1,7 @@
-import { createBrowserRouter, RouterProvider, NavLink, Outlet } from 'react-router';
+import { createBrowserRouter, RouterProvider, NavLink, Navigate, Outlet } from 'react-router';
 import { useState } from 'react';
 import {
   Button,
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
   Sheet,
   SheetContent,
   SheetHeader,
@@ -34,9 +30,6 @@ type NavLinkClassFn = (props: { isActive: boolean }) => string;
 function NavLinks({ className, linkClass, onClick }: { className?: string; linkClass: NavLinkClassFn; onClick?: () => void }) {
   return (
     <nav className={className}>
-      <NavLink to="/" end className={linkClass} onClick={onClick}>
-        Home
-      </NavLink>
       <NavLink to="/lakebase" className={linkClass} onClick={onClick}>
         Lakebase
       </NavLink>
@@ -84,7 +77,7 @@ const router = createBrowserRouter([
   {
     element: <Layout />,
     children: [
-      { path: '/', element: <HomePage /> },
+      { index: true, element: <Navigate to="/lakebase" replace /> },
       { path: '/lakebase', element: <LakebasePage /> },
     ],
   },
@@ -92,50 +85,4 @@ const router = createBrowserRouter([
 
 export default function App() {
   return <RouterProvider router={router} />;
-}
-
-function HomePage() {
-  return (
-    <div className="max-w-2xl mx-auto space-y-6 mt-8">
-      <div className="text-center">
-        <h2 className="text-3xl font-bold mb-2 text-foreground">
-          Welcome to your Databricks App
-        </h2>
-        <p className="text-lg text-muted-foreground">
-          Powered by Databricks AppKit
-        </p>
-      </div>
-
-      <Card className="shadow-lg">
-        <CardHeader>
-          <CardTitle>Getting Started</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground">Your app is ready. Explore the resources below to continue building.</p>
-          <ul className="space-y-2 text-sm">
-            <li>
-              <a
-                href="https://github.com/databricks/appkit"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary underline underline-offset-4 hover:text-primary/80"
-              >
-                AppKit on GitHub →
-              </a>
-            </li>
-            <li>
-              <a
-                href="https://developers.databricks.com/docs/appkit/v0/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary underline underline-offset-4 hover:text-primary/80"
-              >
-                AppKit documentation →
-              </a>
-            </li>
-          </ul>
-        </CardContent>
-      </Card>
-    </div>
-  );
 }
