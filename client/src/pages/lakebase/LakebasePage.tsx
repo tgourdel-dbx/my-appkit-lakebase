@@ -1,25 +1,19 @@
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  Button,
-  Input,
-  Skeleton,
-} from '@databricks/appkit-ui/react';
+import { Card, CardContent, CardHeader, CardTitle, Button, Input, Skeleton } from '@databricks/appkit-ui/react';
 import { useState, useEffect } from 'react';
-import { Check, X } from 'lucide-react';
+import { Check, X, ExternalLink } from 'lucide-react';
 
 interface Todo {
   id: number;
   title: string;
   completed: boolean;
+  url: string | null;
   created_at: string;
 }
 
 export function LakebasePage() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [newTitle, setNewTitle] = useState('');
+  const [newUrl, setNewUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -39,18 +33,20 @@ export function LakebasePage() {
     e.preventDefault();
     const title = newTitle.trim();
     if (!title) return;
+    const url = newUrl.trim();
 
     setSubmitting(true);
     try {
       const res = await fetch('/api/lakebase/todos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title }),
+        body: JSON.stringify(url ? { title, url } : { title }),
       });
       if (!res.ok) throw new Error(`Failed to create todo: ${res.statusText}`);
       const created = (await res.json()) as Todo;
       setTodos((prev) => [created, ...prev]);
       setNewTitle('');
+      setNewUrl('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add todo');
     } finally {
@@ -92,24 +88,29 @@ export function LakebasePage() {
             A simple CRUD example powered by Databricks Lakebase (PostgreSQL).
           </p>
 
-          <form onSubmit={addTodo} className="flex gap-2 mb-6">
+          <form onSubmit={(e) => void addTodo(e)} className="flex flex-col gap-2 mb-6">
+            <div className="flex gap-2">
+              <Input
+                placeholder="What needs to be done?"
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                disabled={submitting}
+                className="flex-1"
+              />
+              <Button type="submit" disabled={submitting || !newTitle.trim()}>
+                {submitting ? 'Adding...' : 'Add'}
+              </Button>
+            </div>
             <Input
-              placeholder="What needs to be done?"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
+              type="url"
+              placeholder="Link (optional) — https://..."
+              value={newUrl}
+              onChange={(e) => setNewUrl(e.target.value)}
               disabled={submitting}
-              className="flex-1"
             />
-            <Button type="submit" disabled={submitting || !newTitle.trim()}>
-              {submitting ? 'Adding...' : 'Add'}
-            </Button>
           </form>
 
-          {error && (
-            <div className="text-destructive bg-destructive/10 p-3 rounded-md mb-4">
-              {error}
-            </div>
-          )}
+          {error && <div className="text-destructive bg-destructive/10 p-3 rounded-md mb-4">{error}</div>}
 
           {loading && (
             <div className="space-y-3">
@@ -123,9 +124,7 @@ export function LakebasePage() {
           )}
 
           {!loading && todos.length === 0 && (
-            <p className="text-muted-foreground text-center py-8">
-              No todos yet. Add one above to get started.
-            </p>
+            <p className="text-muted-foreground text-center py-8">No todos yet. Add one above to get started.</p>
           )}
 
           {!loading && todos.length > 0 && (
@@ -137,7 +136,7 @@ export function LakebasePage() {
                 >
                   <button
                     type="button"
-                    onClick={() => toggleTodo(todo.id)}
+                    onClick={() => void toggleTodo(todo.id)}
                     className={`h-5 w-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
                       todo.completed
                         ? 'bg-primary border-primary text-primary-foreground'
@@ -148,14 +147,25 @@ export function LakebasePage() {
                     {todo.completed && <Check className="h-3 w-3" />}
                   </button>
 
-                  <span className={`flex-1 ${todo.completed ? 'line-through text-muted-foreground' : ''}`}>
-                    {todo.title}
-                  </span>
+                  <div className="flex-1 min-w-0">
+                    <span className={todo.completed ? 'line-through text-muted-foreground' : ''}>{todo.title}</span>
+                    {todo.url && (
+                      <a
+                        href={todo.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-xs text-primary underline underline-offset-4 hover:text-primary/80 truncate"
+                      >
+                        <ExternalLink className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{todo.url}</span>
+                      </a>
+                    )}
+                  </div>
 
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => deleteTodo(todo.id)}
+                    onClick={() => void deleteTodo(todo.id)}
                     className="text-muted-foreground hover:text-destructive shrink-0"
                     aria-label="Delete todo"
                   >
