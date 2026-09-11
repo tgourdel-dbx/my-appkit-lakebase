@@ -31,6 +31,13 @@ const CREATE_TABLE_SQL = `
 
 const CreateTodoBody = z.object({ title: z.string().min(1) });
 
+// Partial update: any subset of editable fields. An empty body is allowed and
+// is treated as a `completed` toggle (backward-compatible with the checkbox).
+const UpdateTodoBody = z.object({
+  title: z.string().min(1).optional(),
+  completed: z.boolean().optional(),
+});
+
 export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
   try {
     const { rows } = await appkit.lakebase.query(TABLE_EXISTS_SQL);
@@ -85,10 +92,40 @@ export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
           res.status(400).json({ error: 'Invalid id' });
           return;
         }
-        const result = await appkit.lakebase.query(
-          'UPDATE app.todos SET completed = NOT completed WHERE id = $1 RETURNING id, title, completed, created_at',
-          [id],
-        );
+        const parsed = UpdateTodoBody.safeParse(req.body ?? {});
+        if (!parsed.success) {
+          res.status(400).json({ error: 'Invalid fields' });
+          return;
+        }
+
+        const { title, completed } = parsed.data;
+
+        let result;
+        if (title === undefined && completed === undefined) {
+          // No fields provided: toggle completion (checkbox behavior).
+          result = await appkit.lakebase.query(
+            'UPDATE app.todos SET completed = NOT completed WHERE id = $1 RETURNING id, title, completed, created_at',
+            [id],
+          );
+        } else {
+          // Update only the fields that were provided.
+          const sets: string[] = [];
+          const values: unknown[] = [];
+          if (title !== undefined) {
+            values.push(title.trim());
+            sets.push(`title = $${values.length}`);
+          }
+          if (completed !== undefined) {
+            values.push(completed);
+            sets.push(`completed = $${values.length}`);
+          }
+          values.push(id);
+          result = await appkit.lakebase.query(
+            `UPDATE app.todos SET ${sets.join(', ')} WHERE id = $${values.length} RETURNING id, title, completed, created_at`,
+            values,
+          );
+        }
+
         if (result.rows.length === 0) {
           res.status(404).json({ error: 'Todo not found' });
           return;

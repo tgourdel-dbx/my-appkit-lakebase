@@ -8,7 +8,7 @@ import {
   Skeleton,
 } from '@databricks/appkit-ui/react';
 import { useState, useEffect } from 'react';
-import { Check, X } from 'lucide-react';
+import { Check, X, Pencil } from 'lucide-react';
 
 interface Todo {
   id: number;
@@ -23,6 +23,9 @@ export function LakebasePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
 
   useEffect(() => {
     fetch('/api/lakebase/todos')
@@ -69,6 +72,39 @@ export function LakebasePage() {
     }
   };
 
+  const startEdit = (todo: Todo) => {
+    setEditingId(todo.id);
+    setEditTitle(todo.title);
+    setError(null);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditTitle('');
+  };
+
+  const saveEdit = async (id: number) => {
+    const title = editTitle.trim();
+    if (!title) return;
+
+    setSavingEdit(true);
+    try {
+      const res = await fetch(`/api/lakebase/todos/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      if (!res.ok) throw new Error(`Failed to update todo: ${res.statusText}`);
+      const updated = (await res.json()) as Todo;
+      setTodos((prev) => prev.map((t) => (t.id === id ? updated : t)));
+      cancelEdit();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update todo');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   const deleteTodo = async (id: number) => {
     try {
       const res = await fetch(`/api/lakebase/todos/${id}`, { method: 'DELETE' });
@@ -92,7 +128,7 @@ export function LakebasePage() {
             A simple CRUD example powered by Databricks Lakebase (PostgreSQL).
           </p>
 
-          <form onSubmit={addTodo} className="flex gap-2 mb-6">
+          <form onSubmit={(e) => void addTodo(e)} className="flex gap-2 mb-6">
             <Input
               placeholder="What needs to be done?"
               value={newTitle}
@@ -137,7 +173,7 @@ export function LakebasePage() {
                 >
                   <button
                     type="button"
-                    onClick={() => toggleTodo(todo.id)}
+                    onClick={() => void toggleTodo(todo.id)}
                     className={`h-5 w-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
                       todo.completed
                         ? 'bg-primary border-primary text-primary-foreground'
@@ -148,19 +184,67 @@ export function LakebasePage() {
                     {todo.completed && <Check className="h-3 w-3" />}
                   </button>
 
-                  <span className={`flex-1 ${todo.completed ? 'line-through text-muted-foreground' : ''}`}>
-                    {todo.title}
-                  </span>
+                  {editingId === todo.id ? (
+                    <>
+                      <Input
+                        value={editTitle}
+                        onChange={(e) => setEditTitle(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') void saveEdit(todo.id);
+                          if (e.key === 'Escape') cancelEdit();
+                        }}
+                        disabled={savingEdit}
+                        autoFocus
+                        className="flex-1"
+                        aria-label="Edit todo title"
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => void saveEdit(todo.id)}
+                        disabled={savingEdit || !editTitle.trim()}
+                        className="shrink-0"
+                        aria-label="Save changes"
+                      >
+                        <Check className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={cancelEdit}
+                        disabled={savingEdit}
+                        className="text-muted-foreground shrink-0"
+                        aria-label="Cancel editing"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <span className={`flex-1 ${todo.completed ? 'line-through text-muted-foreground' : ''}`}>
+                        {todo.title}
+                      </span>
 
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => deleteTodo(todo.id)}
-                    className="text-muted-foreground hover:text-destructive shrink-0"
-                    aria-label="Delete todo"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => startEdit(todo)}
+                        className="text-muted-foreground hover:text-primary shrink-0"
+                        aria-label="Edit todo"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void deleteTodo(todo.id)}
+                        className="text-muted-foreground hover:text-destructive shrink-0"
+                        aria-label="Delete todo"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </>
+                  )}
                 </div>
               ))}
 
