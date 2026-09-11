@@ -31,6 +31,7 @@ class GreeterPlugin extends Plugin {
     resources: { required: [], optional: [] },
   } as PluginManifest<'greeter'>;
 
+  // eslint-disable-next-line @typescript-eslint/require-await -- async to match the Plugin.setup() contract
   async setup() {
     // Routes registered here are captured by createTestPluginContext().routes.
     this.context?.addRoute('get', '/hello', (_req, res) => {
@@ -39,6 +40,7 @@ class GreeterPlugin extends Plugin {
   }
 
   // A stand-in for a streaming handler: yields SSE-style event objects.
+  // eslint-disable-next-line @typescript-eslint/require-await -- async generator to model a streaming handler
   async *greet(name: string) {
     yield { type: 'greeting_start', name };
     yield { type: 'greeting_end', message: `Hello, ${name}!` };
