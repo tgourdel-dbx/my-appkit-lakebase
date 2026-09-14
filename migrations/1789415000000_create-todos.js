@@ -27,12 +27,17 @@ export const up = (pgm) => {
         notNull: true,
         default: pgm.func('now()'),
       },
-    }
+    },
+    // Idempotent baseline: production (and every preview branch cloned from it)
+    // already has app.todos from the old boot-time creation, so this must be a
+    // no-op where the table already exists rather than fail on "relation
+    // already exists".
+    { ifNotExists: true }
   );
 };
 
 /** @param {MigrationBuilder} pgm */
 export const down = (pgm) => {
-  pgm.dropTable({ schema: 'app', name: 'todos' });
+  pgm.dropTable({ schema: 'app', name: 'todos' }, { ifExists: true });
   pgm.dropSchema('app', { ifExists: true });
 };
