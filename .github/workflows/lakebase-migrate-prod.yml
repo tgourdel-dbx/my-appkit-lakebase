@@ -1,0 +1,69 @@
+name: Migrate Production
+
+# When a PR merges to main, apply the committed migrations to the production
+# Lakebase branch. These are the SAME migration files already applied and
+# tested against a preview branch in lakebase-migrate-preview.yml, so this is a
+# replay of a known-good change — never a first-time run against production.
+#
+# Migrations must be idempotent and additive (expand/contract): a migration
+# that fails on re-apply is a bug. Because the app is git-backed and redeploys
+# from main automatically, keep schema changes backward-compatible so the old
+# app code keeps working until the new deploy lands.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'migrations/**'
+      - 'scripts/migrate.js'
+      - 'scripts/lakebase-connect-env.sh'
+      - '.github/workflows/lakebase-migrate-prod.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never run two production migrations at once.
+concurrency:
+  group: lakebase-migrate-prod
+  cancel-in-progress: false
+
+jobs:
+  migrate-prod:
+    runs-on: ubuntu-latest
+
+    env:
+      DATABRICKS_AUTH_TYPE: oauth-m2m
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+
+      LAKEBASE_PROJECT_ID: ${{ vars.LAKEBASE_PROJECT_ID }}
+      LAKEBASE_BRANCH: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - uses: databricks/setup-cli@main
+
+      - name: Resolve connection environment
+        shell: bash
+        run: |
+          BRANCH="projects/${LAKEBASE_PROJECT_ID}/branches/${LAKEBASE_BRANCH}"
+          eval "$(bash scripts/lakebase-connect-env.sh "$BRANCH")"
+          {
+            echo "PGHOST=$PGHOST"
+            echo "PGPORT=$PGPORT"
+            echo "PGDATABASE=$PGDATABASE"
+            echo "PGSSLMODE=$PGSSLMODE"
+            echo "LAKEBASE_ENDPOINT=$LAKEBASE_ENDPOINT"
+          } >> "$GITHUB_ENV"
+
+      - name: Apply migrations to production
+        run: npm run migrate:up

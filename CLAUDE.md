@@ -28,17 +28,34 @@ Never create or delete Databricks Apps manually.
 
 ## Database changes
 
-All schema changes must be represented by migration files committed to Git.
+All schema changes must be represented by
+[`node-pg-migrate`](https://github.com/salsita/node-pg-migrate) migration files
+in `migrations/`, committed to Git alongside the application code. Never change
+the schema by hand and never create tables at app boot — the migration files
+are the single source of truth, replayed identically against every branch
+(preview and production).
+
+Migrations must be **idempotent and additive**: a migration that fails on
+re-apply is a bug. For renames/removals use the expand/contract pattern (add
+the new column, migrate readers, then drop the old one in a later migration) so
+the running app code stays compatible across the deploy.
 
 When database changes are required:
 
 1. Verify `AGENT_ENV=lakebase-preview`.
 2. Verify `LAKEBASE_BRANCH` is defined.
-3. Apply changes only against that branch.
-4. Run migrations and tests against that branch.
-5. Commit the migration with the application code.
+3. Load the connection environment for this worktree's preview branch:
+   `eval "$(bash scripts/lakebase-connect-env.sh "$LAKEBASE_BRANCH_RESOURCE")"`
+4. Author the migration (`npm run migrate:create -- <name>` scaffolds
+   `migrations/<ts>_<name>.js`) and apply it with `npm run migrate:up`
+   (`npm run migrate:down` rolls back the most recent one).
+5. Run tests against that branch (`npm test`).
+6. Commit the migration with the application code.
 
-Never apply migrations directly to production.
+Never apply migrations directly to production. Production is migrated only by
+the `Migrate Production` GitHub Action on merge to main, replaying the same
+committed files that `Migrate & Test (Preview Branch)` already applied and
+tested on the PR's preview branch.
 
 ## Pull requests
 
@@ -98,6 +115,7 @@ Lakebase branch. If a PR is never opened, the branch's 30-day TTL reclaims
 it as a backstop.
 
 <!-- appkit-instructions-start -->
+
 ## Databricks AppKit
 
 This project uses Databricks AppKit packages. For AI assistant guidance on using these packages, refer to:
@@ -112,4 +130,5 @@ For enhanced AI assistance with Databricks CLI operations, authentication, data 
 ```bash
 databricks aitools install
 ```
+
 <!-- appkit-instructions-end -->

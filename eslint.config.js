@@ -70,6 +70,17 @@ export default tseslint.config(
     ...tseslint.configs.disableTypeChecked,
   },
 
+  // Node.js globals for migration runner scripts and migration files
+  {
+    files: ['scripts/**/*.js', 'migrations/**/*.js'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+      },
+    },
+  },
+
   // Prettier config (must be last to override other formatting rules)
   prettier,
 

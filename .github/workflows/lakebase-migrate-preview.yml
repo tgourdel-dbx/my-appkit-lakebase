@@ -1,0 +1,91 @@
+name: Migrate & Test (Preview Branch)
+
+# On every PR push, apply the committed migrations to this PR's Lakebase
+# preview branch (the copy-on-write clone of production that the Claude
+# worktree session created), then run the test suite against real Postgres.
+#
+# The preview branch is keyed to the Git branch via scripts/branch-name.sh —
+# the same mapping the worktree hook and the cleanup workflow use — so a branch
+# already created locally is reused, and one is created from production if it
+# does not exist yet. It is deleted by lakebase-cleanup.yml when the PR closes.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  migrate-and-test:
+    runs-on: ubuntu-latest
+
+    env:
+      # Databricks auth via OAuth M2M (service principal client id + secret).
+      DATABRICKS_AUTH_TYPE: oauth-m2m
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+
+      LAKEBASE_PROJECT_ID: ${{ vars.LAKEBASE_PROJECT_ID }}
+      LAKEBASE_PARENT_BRANCH: production
+      # Feature-development TTL (7 days); cleanup on PR close is the normal path.
+      LAKEBASE_TTL: 604800s
+
+      GIT_BRANCH: ${{ github.event.pull_request.head.ref }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - uses: databricks/setup-cli@main
+
+      - name: Compute Lakebase branch id
+        id: lakebase
+        shell: bash
+        run: |
+          LAKEBASE_BRANCH="$(bash scripts/branch-name.sh "$GIT_BRANCH")"
+          echo "branch=$LAKEBASE_BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure preview branch exists
+        shell: bash
+        env:
+          LAKEBASE_BRANCH: ${{ steps.lakebase.outputs.branch }}
+        run: |
+          PROJECT="projects/${LAKEBASE_PROJECT_ID}"
+          BRANCH="${PROJECT}/branches/${LAKEBASE_BRANCH}"
+          PARENT="${PROJECT}/branches/${LAKEBASE_PARENT_BRANCH}"
+
+          if databricks postgres get-branch "$BRANCH" >/dev/null 2>&1; then
+            echo "Reusing existing preview branch: $LAKEBASE_BRANCH"
+          else
+            echo "Creating preview branch $LAKEBASE_BRANCH from $LAKEBASE_PARENT_BRANCH"
+            databricks postgres create-branch "$PROJECT" "$LAKEBASE_BRANCH" \
+              --json "{\"spec\": {\"source_branch\": \"${PARENT}\", \"ttl\": \"${LAKEBASE_TTL}\"}}"
+          fi
+
+      - name: Resolve connection environment
+        shell: bash
+        env:
+          LAKEBASE_BRANCH: ${{ steps.lakebase.outputs.branch }}
+        run: |
+          BRANCH="projects/${LAKEBASE_PROJECT_ID}/branches/${LAKEBASE_BRANCH}"
+          eval "$(bash scripts/lakebase-connect-env.sh "$BRANCH")"
+          {
+            echo "PGHOST=$PGHOST"
+            echo "PGPORT=$PGPORT"
+            echo "PGDATABASE=$PGDATABASE"
+            echo "PGSSLMODE=$PGSSLMODE"
+            echo "LAKEBASE_ENDPOINT=$LAKEBASE_ENDPOINT"
+          } >> "$GITHUB_ENV"
+
+      - name: Apply migrations to preview branch
+        run: npm run migrate:up
+
+      - name: Run tests
+        run: npm test

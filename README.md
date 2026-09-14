@@ -3,6 +3,7 @@
 A Databricks App powered by [AppKit](https://developers.databricks.com/docs/appkit/v0/), featuring React, TypeScript, and Tailwind CSS.
 
 **Enabled plugins:**
+
 - **Lakebase** -- Fully managed Postgres database for transactional (OLTP) workloads on Databricks
 - **Server** -- Express HTTP server with static file serving and Vite dev mode
 
@@ -125,6 +126,34 @@ npm run lint:fix
 npm run format
 npm run format:fix
 ```
+
+## Database migrations
+
+Schema changes are managed with [`node-pg-migrate`](https://github.com/salsita/node-pg-migrate).
+Migration files live in `migrations/` and are committed to Git — they are the
+single source of truth for the schema and are replayed identically against
+every Lakebase branch (preview and production). The app no longer creates
+tables at boot.
+
+Migrations connect to Lakebase via `@databricks/lakebase`, which mints and
+refreshes the short-lived OAuth database token automatically — no token is ever
+written to disk.
+
+```bash
+# Point the migration tooling at a branch (resolves PGHOST / LAKEBASE_ENDPOINT / …)
+eval "$(bash scripts/lakebase-connect-env.sh projects/<project>/branches/<branch>)"
+
+npm run migrate:create -- add-something   # scaffold migrations/<ts>_add-something.js
+npm run migrate:up                        # apply pending migrations
+npm run migrate:down                      # roll back the most recent migration
+```
+
+**How changes reach production:** you never merge a database branch back.
+On a pull request, the `Migrate & Test (Preview Branch)` workflow applies the
+migrations to the PR's preview branch and runs the tests against real Postgres.
+On merge to `main`, the `Migrate Production` workflow replays the same committed
+files against the `production` branch. Keep migrations idempotent and additive
+(expand/contract) so the running app stays compatible across the deploy.
 
 ## Deployment with Databricks Asset Bundles
 
