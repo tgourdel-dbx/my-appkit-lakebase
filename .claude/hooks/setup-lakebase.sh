@@ -60,7 +60,7 @@ DATABASE="${BRANCH}/databases/${LAKEBASE_DATABASE_ID}"
 #     support extending a branch's TTL), so it is set well beyond the life
 #     of a feature branch to avoid deleting active work.
 # ---------------------------------------------------------
-LAKEBASE_TTL="${LAKEBASE_TTL:-2592000s}"  # 30 days (Lakebase max)
+LAKEBASE_TTL="${LAKEBASE_TTL:-2505600s}"  # 29 days (just under Lakebase's exclusive 30-day max)
 
 if databricks postgres get-branch "$BRANCH" >/dev/null 2>&1; then
   echo "Lakebase branch already exists: $LAKEBASE_BRANCH"

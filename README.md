@@ -275,7 +275,7 @@ For a PR numbered `123`, the workflow:
 
    ```bash
    databricks postgres create-branch projects/appkit-lakebase-db pr-123 \
-     --json '{"spec":{"source_branch":"projects/appkit-lakebase-db/branches/production","ttl":"2592000s"}}'
+     --json '{"spec":{"source_branch":"projects/appkit-lakebase-db/branches/production","ttl":"2505600s"}}'
    ```
 
 2. **Applies migrations — if the PR ships them.** If the PR's code exposes an

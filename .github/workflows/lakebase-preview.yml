@@ -84,7 +84,7 @@ jobs:
               --json "{
                 \"spec\": {
                   \"source_branch\": \"${PARENT}\",
-                  \"ttl\": \"2592000s\"
+                  \"ttl\": \"2505600s\"
                 }
               }"
           fi
