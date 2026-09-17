@@ -1,0 +1,169 @@
+name: Deploy Lakebase Preview
+
+# For every open pull request, deploy an ephemeral preview app to Databricks
+# Apps, backed by a fresh Lakebase branch cloned from production.
+#
+#   - The Lakebase branch (pr-<number>) is a copy-on-write clone of production,
+#     so the preview runs against real-shaped data in full isolation.
+#   - Database migrations are applied to that branch before the app deploys,
+#     but only if the PR's code actually ships a migrate script (so this is a
+#     no-op until migration tooling lands on the branch).
+#   - The preview app (appkit-lakebase-pr-<number>) deploys the PR's head
+#     branch and connects to the pr-<number> Lakebase branch.
+#
+# Both the app and the branch are torn down by the `Cleanup Lakebase Branch`
+# workflow when the PR is closed or merged.
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+# Cancel an in-flight deploy when a newer commit is pushed to the same PR.
+concurrency:
+  group: lakebase-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+
+    env:
+      # Databricks auth via OAuth M2M (service principal client id + secret).
+      DATABRICKS_AUTH_TYPE: oauth-m2m
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ vars.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+
+      LAKEBASE_PROJECT_ID: ${{ vars.LAKEBASE_PROJECT_ID }}
+      LAKEBASE_PARENT_BRANCH: production
+      LAKEBASE_DATABASE_ID: databricks-postgres
+
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      GIT_BRANCH: ${{ github.event.pull_request.head.ref }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Check out the PR head so migrations and the deploy use its code.
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: databricks/setup-cli@main
+
+      - name: Resolve preview identifiers
+        id: preview
+        shell: bash
+        run: |
+          LAKEBASE_BRANCH="pr-${PR_NUMBER}"
+          APP_NAME="appkit-lakebase-pr-${PR_NUMBER}"
+          echo "lakebase_branch=$LAKEBASE_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "app_name=$APP_NAME" >> "$GITHUB_OUTPUT"
+          echo "branch_resource=projects/${LAKEBASE_PROJECT_ID}/branches/${LAKEBASE_BRANCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Create Lakebase branch (fresh clone of production)
+        shell: bash
+        env:
+          BRANCH_RESOURCE: ${{ steps.preview.outputs.branch_resource }}
+          LAKEBASE_BRANCH: ${{ steps.preview.outputs.lakebase_branch }}
+        run: |
+          PROJECT="projects/${LAKEBASE_PROJECT_ID}"
+          PARENT="${PROJECT}/branches/${LAKEBASE_PARENT_BRANCH}"
+
+          if databricks postgres get-branch "$BRANCH_RESOURCE" >/dev/null 2>&1; then
+            echo "Lakebase branch already exists: $LAKEBASE_BRANCH"
+          else
+            echo "Creating Lakebase branch $LAKEBASE_BRANCH from $LAKEBASE_PARENT_BRANCH"
+            databricks postgres create-branch \
+              "$PROJECT" \
+              "$LAKEBASE_BRANCH" \
+              --json "{
+                \"spec\": {
+                  \"source_branch\": \"${PARENT}\",
+                  \"ttl\": \"2592000s\"
+                }
+              }"
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Run database migrations (only if the PR ships a migrate script)
+        shell: bash
+        env:
+          # @databricks/lakebase resolves the connection from these plus the
+          # OAuth M2M env above; it refreshes the DB token automatically.
+          PGHOST: ${{ vars.PGHOST }}
+          PGPORT: "5432"
+          PGSSLMODE: require
+          PGDATABASE: ${{ env.LAKEBASE_DATABASE_ID }}
+          LAKEBASE_ENDPOINT: ${{ steps.preview.outputs.branch_resource }}/databases/${{ env.LAKEBASE_DATABASE_ID }}
+        run: |
+          if npm run 2>/dev/null | grep -qE '^  migrate$'; then
+            echo "migrate script found — applying migrations to ${{ steps.preview.outputs.lakebase_branch }}"
+            npm ci
+            npm run migrate
+          else
+            echo "No migrate script in this PR — skipping migrations."
+          fi
+
+      - name: Deploy preview app
+        shell: bash
+        run: |
+          databricks bundle deploy -t preview \
+            --var "pr_number=${PR_NUMBER}" \
+            --var "git_branch=${GIT_BRANCH}"
+
+          # Trigger the app deployment/start from the git source.
+          databricks bundle run app -t preview \
+            --var "pr_number=${PR_NUMBER}" \
+            --var "git_branch=${GIT_BRANCH}"
+
+      - name: Read preview app URL
+        id: url
+        shell: bash
+        env:
+          APP_NAME: ${{ steps.preview.outputs.app_name }}
+        run: |
+          APP_URL="$(databricks apps get "$APP_NAME" -o json | jq -r '.url')"
+          echo "app_url=$APP_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Comment preview URL on the PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_NAME: ${{ steps.preview.outputs.app_name }}
+          APP_URL: ${{ steps.url.outputs.app_url }}
+          LAKEBASE_BRANCH: ${{ steps.preview.outputs.lakebase_branch }}
+        shell: bash
+        run: |
+          BODY="$(cat <<EOF
+          ### 🚀 Lakebase preview deployed
+
+          | | |
+          | --- | --- |
+          | **Preview app** | [\`${APP_NAME}\`](${APP_URL}) |
+          | **Lakebase branch** | \`${LAKEBASE_BRANCH}\` (fresh clone of \`production\`) |
+          | **Deployed commit** | \`${{ github.event.pull_request.head.sha }}\` |
+
+          This preview and its database branch are deleted automatically when the PR is closed.
+          EOF
+          )"
+
+          # Upsert: reuse the existing preview comment if one is already posted.
+          MARKER="<!-- lakebase-preview -->"
+          BODY="${BODY}"$'\n'"${MARKER}"
+          EXISTING="$(gh pr view "$PR_NUMBER" --json comments \
+            --jq ".comments[] | select(.body | contains(\"${MARKER}\")) | .url" | head -n1)"
+
+          if [[ -n "$EXISTING" ]]; then
+            gh pr comment "$PR_NUMBER" --edit-last --body "$BODY"
+          else
+            gh pr comment "$PR_NUMBER" --body "$BODY"
+          fi

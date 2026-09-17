@@ -1,8 +1,12 @@
 name: Cleanup Lakebase Branch
 
-# When a PR is closed (merged or not), delete the per-PR Lakebase branch that
-# the Claude worktree session created for it. There is no Databricks App to
-# tear down — this repo no longer deploys per-PR preview apps.
+# When a PR is closed (merged or not), tear down everything the PR created:
+#   - the per-PR preview app (appkit-lakebase-pr-<number>), deployed by the
+#     `Deploy Lakebase Preview` workflow;
+#   - the preview Lakebase branch (pr-<number>), cloned from production by that
+#     same workflow;
+#   - the per-worktree Lakebase branch that the local Claude session created
+#     from the Git branch name (see scripts/branch-name.sh).
 on:
   pull_request:
     types:
@@ -24,6 +28,7 @@ jobs:
 
       LAKEBASE_PROJECT_ID: ${{ vars.LAKEBASE_PROJECT_ID }}
 
+      PR_NUMBER: ${{ github.event.pull_request.number }}
       GIT_BRANCH: ${{ github.event.pull_request.head.ref }}
 
     steps:
@@ -31,20 +36,32 @@ jobs:
 
       - uses: databricks/setup-cli@main
 
-      - name: Compute Lakebase branch id
-        id: lakebase
+      - name: Delete preview app
         shell: bash
         run: |
-          LAKEBASE_BRANCH="$(bash scripts/branch-name.sh "$GIT_BRANCH")"
-          echo "branch=$LAKEBASE_BRANCH" >> "$GITHUB_OUTPUT"
-
-      - name: Delete Lakebase branch
-        shell: bash
-        run: |
-          BRANCH="projects/${LAKEBASE_PROJECT_ID}/branches/${{ steps.lakebase.outputs.branch }}"
-
-          if databricks postgres get-branch "$BRANCH" >/dev/null 2>&1; then
-            databricks postgres delete-branch "$BRANCH"
+          APP_NAME="appkit-lakebase-pr-${PR_NUMBER}"
+          if databricks apps get "$APP_NAME" >/dev/null 2>&1; then
+            echo "Deleting preview app: $APP_NAME"
+            databricks apps delete "$APP_NAME"
           else
-            echo "Lakebase branch already deleted."
+            echo "Preview app already deleted: $APP_NAME"
           fi
+
+      - name: Delete Lakebase branches
+        shell: bash
+        run: |
+          PROJECT="projects/${LAKEBASE_PROJECT_ID}"
+
+          # Both the per-PR preview branch and the per-worktree dev branch.
+          WORKTREE_BRANCH="$(bash scripts/branch-name.sh "$GIT_BRANCH")"
+          PREVIEW_BRANCH="pr-${PR_NUMBER}"
+
+          for BRANCH_ID in "$PREVIEW_BRANCH" "$WORKTREE_BRANCH"; do
+            BRANCH="${PROJECT}/branches/${BRANCH_ID}"
+            if databricks postgres get-branch "$BRANCH" >/dev/null 2>&1; then
+              echo "Deleting Lakebase branch: $BRANCH_ID"
+              databricks postgres delete-branch "$BRANCH"
+            else
+              echo "Lakebase branch already deleted: $BRANCH_ID"
+            fi
+          done
