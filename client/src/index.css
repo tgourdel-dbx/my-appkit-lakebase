@@ -1,5 +1,12 @@
 @import "@databricks/appkit-ui/styles.css";
 
+/* Increase the base font size app-wide. Tailwind sizing uses rem units, so
+   bumping the root font size from the browser default (16px) to 18px scales
+   text, spacing, and controls proportionally. */
+html {
+  font-size: 112.5%;
+}
+
 :root {
   /* --radius: 0.625rem;
   --background: oklch(1 0 0);
