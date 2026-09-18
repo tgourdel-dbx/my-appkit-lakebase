@@ -154,10 +154,64 @@ jobs:
             --var "pr_number=${PR_NUMBER}" \
             --var "git_branch=${GIT_BRANCH}"
 
-      # Database schema: no per-PR grant/ownership step is needed. Each pr-<n>
-      # branch clones production, and the `Migrate Lakebase Production` workflow
-      # keeps production's schema current on merge to main — so previews inherit
-      # an up-to-date schema and the app reads/writes it directly.
+      # -----------------------------------------------------------------------
+      # Grant the preview app access to the schema.
+      #
+      # Each preview app runs as its OWN service principal (not the CI SP), so it
+      # must be made a member of `app_schema_owner` — the role that owns the
+      # `app`/`appkit` schemas — to inherit read/write (and ALTER) on them.
+      # The CI SP performs the GRANT; it needs ADMIN OPTION on `app_schema_owner`
+      # (granted once, out of band). No superuser is required.
+      #
+      # PREREQUISITES (one-time, see README):
+      #   - the `app` and `appkit` schemas are OWNED BY `app_schema_owner`;
+      #   - the CI service principal is a member of `app_schema_owner` WITH ADMIN
+      #     OPTION (so it can grant membership to each preview app SP).
+      # -----------------------------------------------------------------------
+      - name: Grant preview app membership in app_schema_owner
+        shell: bash
+        env:
+          APP_NAME: ${{ steps.preview.outputs.app_name }}
+          BRANCH_RESOURCE: ${{ steps.preview.outputs.branch_resource }}
+        run: |
+          set -euo pipefail
+          command -v psql >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y postgresql-client; }
+
+          PREVIEW_SP="$(databricks apps get "$APP_NAME" -o json | jq -r '.service_principal_client_id')"
+          if [[ -z "$PREVIEW_SP" || "$PREVIEW_SP" == "null" ]]; then
+            echo "Could not resolve the preview app service principal." >&2
+            exit 1
+          fi
+
+          EP="$(databricks postgres list-endpoints "$BRANCH_RESOURCE" -o json \
+            | jq -r 'if type=="array" then . else (.endpoints // []) end
+                     | (map(select((.spec.type // .type)=="ENDPOINT_TYPE_READ_WRITE")) | .[0].name)
+                       // .[0].name')"
+          HOST="$(databricks postgres get-endpoint "$EP" -o json | jq -r '.status.hosts.host')"
+          PGDB="$(databricks postgres get-database "${BRANCH_RESOURCE}/databases/databricks-postgres" -o json \
+            | jq -r '.status.postgres_database // "databricks_postgres"')"
+          TOKEN="$(databricks postgres generate-database-credential "$EP" -o json | jq -r '.token')"
+
+          echo "Granting app_schema_owner to preview app SP ${PREVIEW_SP}"
+          # Runs as the CI SP, which holds ADMIN OPTION on app_schema_owner — no
+          # superuser needed. Idempotent: re-granting an existing membership is a
+          # no-op.
+          PGPASSWORD="$TOKEN" psql \
+            "host=${HOST} port=5432 user=${DATABRICKS_CLIENT_ID} dbname=${PGDB} sslmode=require" \
+            -v ON_ERROR_STOP=1 -v sp="$PREVIEW_SP" \
+            -c 'GRANT app_schema_owner TO :"sp";'
+
+      - name: Restart preview app so it picks up schema access
+        shell: bash
+        env:
+          APP_NAME: ${{ steps.preview.outputs.app_name }}
+        run: |
+          set -euo pipefail
+          # The app's startup schema setup ran before the grant (with fresh DB
+          # connections that predate the new membership); restart so it re-runs
+          # with access.
+          databricks apps stop "$APP_NAME"
+          databricks apps start "$APP_NAME"
 
       - name: Read preview app URL
         id: url
