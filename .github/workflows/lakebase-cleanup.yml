@@ -33,20 +33,32 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Use the PR head's databricks.yml so `bundle destroy` resolves the
+          # same per-PR root_path the preview was deployed with.
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - uses: databricks/setup-cli@main
         with:
           version: 1.17.0
 
-      - name: Delete preview app
+      - name: Destroy preview app and its bundle state
         shell: bash
         run: |
+          set -euo pipefail
           APP_NAME="appkit-lakebase-pr-${PR_NUMBER}"
-          if databricks apps get "$APP_NAME" >/dev/null 2>&1; then
-            echo "Deleting preview app: $APP_NAME"
+
+          # Prefer `bundle destroy`: it removes the app AND the per-PR bundle
+          # state under .bundle/.../preview/pr-<n>. Fall back to deleting the app
+          # by name if there is no matching state (e.g. the deploy never ran).
+          if databricks bundle destroy -t preview --auto-approve --force-lock \
+               --var "pr_number=${PR_NUMBER}" --var "git_branch=${GIT_BRANCH}"; then
+            echo "Destroyed preview bundle for pr-${PR_NUMBER}"
+          elif databricks apps get "$APP_NAME" >/dev/null 2>&1; then
+            echo "bundle destroy did not apply; deleting app by name: $APP_NAME"
             databricks apps delete "$APP_NAME"
           else
-            echo "Preview app already deleted: $APP_NAME"
+            echo "Preview app already gone: $APP_NAME"
           fi
 
       - name: Delete Lakebase branches
