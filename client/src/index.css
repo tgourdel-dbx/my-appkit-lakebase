@@ -1,5 +1,14 @@
 @import "@databricks/appkit-ui/styles.css";
 
+/*
+ * Scale the whole app's typography up. AppKit/Tailwind sizes are rem-based,
+ * so bumping the root font size (16px default -> 18px) increases every
+ * text-xs/sm/base/lg utility proportionally without touching components.
+ */
+html {
+  font-size: 18px;
+}
+
 :root {
   /* --radius: 0.625rem;
   --background: oklch(1 0 0);
