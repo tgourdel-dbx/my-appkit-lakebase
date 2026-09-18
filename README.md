@@ -12,8 +12,8 @@ A Databricks App powered by [AppKit](https://developers.databricks.com/docs/appk
 - Databricks CLI (for deployment)
 - Access to a Databricks workspace
 - For the per-PR preview pipeline: a CI service principal with the
-  `workspace-access` entitlement, `CAN_MANAGE` on the Lakebase project, and
-  `databricks_superuser` membership, plus the GitHub Actions variables/secrets
+  `workspace-access` entitlement and `CAN_MANAGE` on the Lakebase project, the
+  GitHub Actions variables/secrets, and a one-time schema grant on `production`
   — see [One-time setup for the preview pipeline](#one-time-setup-for-the-preview-pipeline).
 
 ## Databricks Authentication
@@ -346,9 +346,9 @@ databricks permissions update database-projects appkit-lakebase-db --json '{
 }'
 ```
 
-> `CAN_MANAGE` is the control-plane permission to manage branches. The SP also
-> needs an in-database `databricks_superuser` role so the workflow can transfer
-> schema ownership to each preview app — that's step 5 below.
+> `CAN_MANAGE` is the control-plane permission to create and delete branches —
+> that is all the CI service principal needs. It does **not** need any
+> in-database Postgres role or `databricks_superuser` membership.
 
 **4. Configure GitHub Actions variables & secrets** (repository or org level):
 
@@ -360,42 +360,35 @@ databricks permissions update database-projects appkit-lakebase-db --json '{
 | Variable  | `PGHOST`                   | Postgres host (only needed for the migrate step) |
 | Secret    | `DATABRICKS_CLIENT_SECRET` | Service principal OAuth secret                 |
 
-**5. Let the CI service principal transfer schema ownership.** Every Databricks
-App runs as its **own** service principal, and each `pr-<n>` branch is a clone
-of `production` whose `app` and `appkit` schemas (and their tables) are owned by
-whoever owns them in production — not by the preview app's SP. This template's
-app also **evolves its own schema at startup** (`CREATE TABLE` /
-`ALTER TABLE … ADD COLUMN` in `server/routes/lakebase/todo-routes.ts`), which
-requires **table ownership**. A preview app that doesn't own the cloned schema
-fails with `permission denied for schema` / `must be owner of table`.
+**5. Grant the app access to its schema — once, on `production`.** A preview app
+connects with `CAN_CONNECT_AND_CREATE`, but the `app` and `appkit` schemas it
+uses are cloned from production and owned there by another role, so the app's SP
+needs **DML access** granted (otherwise it fails with `permission denied for
+schema`). Because a branch clone inherits production's Postgres grants, grant
+this **once** on the `production` branch — as the schema owner, via the Lakebase
+SQL editor — and every future preview inherits it:
 
-So the preview workflow transfers ownership of the `app` and `appkit` schemas
-to each preview app's SP right after deploy (the *Give preview app ownership of
-its schemas* step), then restarts the app. Reassigning ownership across roles
-requires **superuser**, so the CI service principal must be a member of the
-`databricks_superuser` Postgres role. Grant it **once** on the `production`
-branch so every clone inherits it (creating the SP's Postgres role at the same
-time):
-
-```bash
-databricks postgres create-role projects/appkit-lakebase-db/branches/production \
-  --role-id <SP_CLIENT_ID> \
-  --json '{"spec":{"identity_type":"SERVICE_PRINCIPAL","postgres_role":"<SP_CLIENT_ID>","auth_method":"LAKEBASE_OAUTH_V1","membership_roles":["DATABRICKS_SUPERUSER"]}}'
+```sql
+-- run ONCE on the production branch, database databricks_postgres
+GRANT USAGE ON SCHEMA app, appkit TO PUBLIC;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA app    TO PUBLIC;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA appkit TO PUBLIC;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA app    TO PUBLIC;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA appkit TO PUBLIC;
 ```
 
-Verify:
+Schema **changes** are handled separately by migrations: the *Migrate Lakebase
+Production* workflow (step 2) applies them to `production` on merge, so previews
+cloned afterward already have the current schema. This is why **no per-PR grant,
+ownership transfer, or `databricks_superuser` is needed** — the app reads/writes
+via the inherited grants, and migrations (not the app or the preview pipeline)
+own schema evolution.
 
-```bash
-databricks postgres list-roles projects/appkit-lakebase-db/branches/production -o json \
-  | jq -r '.[] | [.role_id, (.status.membership_roles // [] | join(","))] | @tsv'
-```
-
-> Trade-off: the CI service principal can act as a superuser on any branch it
-> can connect to (including `production`), not just ephemeral preview branches.
-> Its OAuth secret lives in GitHub Actions, so treat it accordingly. The
-> alternative — a best-practice migrations-driven schema where the app never
-> owns its tables — avoids this but requires reworking the app to stop evolving
-> its schema at startup.
+> The app template also runs an idempotent `CREATE TABLE`/`ALTER TABLE` at
+> startup (`server/routes/lakebase/todo-routes.ts`). Since the app's SP doesn't
+> *own* the cloned tables, that step logs a benign `must be owner` warning and
+> is skipped — harmless, because migrations already applied the schema. Moving
+> that logic fully into migrations would remove the warning.
 
 ### 5. Cleanup happens automatically
 
