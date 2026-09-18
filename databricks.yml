@@ -50,9 +50,10 @@ targets:
           git_source:
             branch: main
 
-          # Start the app automatically on deploy.
-          lifecycle:
-            started: true
+          # NOTE: `lifecycle.started` is only supported by the direct deployment
+          # engine (CLI v1.14.0+). To stay engine-agnostic, the app is started
+          # explicitly after deploy with `databricks bundle run app` (or
+          # `databricks apps deploy`), not via lifecycle here.
 
           # The resources which this app has access to.
           resources:
@@ -95,8 +96,8 @@ targets:
           git_source:
             branch: ${var.git_branch}
 
-          lifecycle:
-            started: true
+          # Started explicitly by the workflow (`databricks bundle run app
+          # -t preview`); see the note on the production app above.
 
           resources:
             - name: postgres
