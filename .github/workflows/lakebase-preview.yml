@@ -53,7 +53,14 @@ jobs:
           # Check out the PR head so migrations and the deploy use its code.
           ref: ${{ github.event.pull_request.head.sha }}
 
+      # Pin the CLI version. `@main` installs the latest release, whose newer
+      # "direct" bundle-deployment engine currently panics on the app resource
+      # (nil pointer in ResourceApp.OverrideChangeDesc). v1.13.0 uses the
+      # classic engine, which is what databricks.yml is written for (it avoids
+      # `lifecycle.started` specifically to stay engine-agnostic).
       - uses: databricks/setup-cli@main
+        with:
+          version: 1.13.0
 
       - name: Resolve preview identifiers
         id: preview
