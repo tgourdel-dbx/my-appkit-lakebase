@@ -131,7 +131,11 @@ jobs:
         run: |
           if npm run 2>/dev/null | grep -qE '^  migrate$'; then
             echo "migrate script found — applying migrations to ${{ steps.preview.outputs.lakebase_branch }}"
-            npm ci
+            # --ignore-scripts: migrations only need node-pg-migrate + pg +
+            # @databricks/lakebase, none of which require lifecycle scripts.
+            # Skipping them avoids the app toolchain's install-script hooks
+            # (esbuild/protobufjs/appkit), which stall in this minimal CI step.
+            npm ci --ignore-scripts
             npm run migrate
           else
             echo "No migrate script in this PR — skipping migrations."

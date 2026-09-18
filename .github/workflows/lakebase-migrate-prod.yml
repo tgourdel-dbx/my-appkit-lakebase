@@ -78,7 +78,11 @@ jobs:
           set -euo pipefail
           if npm run 2>/dev/null | grep -qE '^  migrate$'; then
             echo "Applying pending migrations to the production branch"
-            npm ci
+            # --ignore-scripts: migrations only need node-pg-migrate + pg +
+            # @databricks/lakebase, none of which require lifecycle scripts.
+            # Skipping them avoids the app toolchain's install-script hooks
+            # (esbuild/protobufjs/appkit), which stall in this minimal CI step.
+            npm ci --ignore-scripts
             npm run migrate
           else
             echo "No migrate script present in this commit — nothing to apply."
