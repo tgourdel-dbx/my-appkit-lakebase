@@ -54,6 +54,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - uses: databricks/setup-cli@main
+        with:
+          version: 1.13.0
 
       - name: Resolve preview identifiers
         id: preview
