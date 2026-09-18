@@ -4,6 +4,7 @@ import reactPlugin from 'eslint-plugin-react';
 import reactHooksPlugin from 'eslint-plugin-react-hooks';
 import reactRefreshPlugin from 'eslint-plugin-react-refresh';
 import prettier from 'eslint-config-prettier';
+import globals from 'globals';
 
 export default tseslint.config(
   // Global ignores
@@ -68,6 +69,21 @@ export default tseslint.config(
   {
     files: ['**/*.js', '*.config.ts', '**/*.config.ts'],
     ...tseslint.configs.disableTypeChecked,
+  },
+
+  // Plain Node.js scripts and DB migrations: run directly by `node` (not
+  // bundled or type-checked by the project service), so give them Node globals
+  // and skip the type-aware rules.
+  {
+    files: ['scripts/**/*.{js,mjs,cjs}', 'migrations/**/*.{js,mjs,cjs}'],
+    ...tseslint.configs.disableTypeChecked,
+    languageOptions: {
+      // These files aren't part of a tsconfig, so keep them off the typed
+      // project service (which otherwise errors "not found by the project
+      // service") and just give them Node globals.
+      parserOptions: { projectService: false, project: false },
+      globals: { ...globals.node },
+    },
   },
 
   // Prettier config (must be last to override other formatting rules)

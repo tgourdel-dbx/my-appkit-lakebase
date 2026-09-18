@@ -26,22 +26,37 @@ const CREATE_TABLE_SQL = `
     title TEXT NOT NULL,
     completed BOOLEAN NOT NULL DEFAULT false,
     url TEXT,
+    due_date DATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )
 `;
 
-// Idempotent migration so a pre-existing todos table gains the url column.
+// Idempotent startup migrations so a pre-existing todos table gains newer
+// columns. The canonical schema change lives in migrations/ (applied by CI via
+// `npm run migrate`); these keep local/dev startup resilient if migrations
+// haven't run yet.
 const ADD_URL_COLUMN_SQL = `ALTER TABLE app.todos ADD COLUMN IF NOT EXISTS url TEXT`;
+const ADD_DUE_DATE_COLUMN_SQL = `ALTER TABLE app.todos ADD COLUMN IF NOT EXISTS due_date DATE`;
 
-// Empty strings from the client are treated as "no link" rather than a
-// validation error; any non-empty value must be a valid URL.
+// A todo's due date is an optional calendar day (YYYY-MM-DD, no time-of-day).
+// Empty strings from the client are treated as "no deadline"/"no link" rather
+// than a validation error; any non-empty url must be a valid URL.
+const emptyToUndefined = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
 const CreateTodoBody = z.object({
   title: z.string().min(1),
-  url: z.preprocess(
-    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
-    z.string().trim().url().optional()
+  url: z.preprocess(emptyToUndefined, z.string().trim().url().optional()),
+  dueDate: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'dueDate must be a YYYY-MM-DD date')
+      .optional()
   ),
 });
+
+// Columns returned to the client. due_date is cast to text so pg returns the
+// literal 'YYYY-MM-DD' instead of a timezone-shifted Date object.
+const TODO_COLUMNS = 'id, title, completed, url, due_date::text AS due_date, created_at';
 
 export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
   try {
@@ -55,6 +70,7 @@ export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
     }
     // Runs for both new and pre-existing tables; safe to repeat.
     await appkit.lakebase.query(ADD_URL_COLUMN_SQL);
+    await appkit.lakebase.query(ADD_DUE_DATE_COLUMN_SQL);
   } catch (err) {
     console.warn('[lakebase] Database setup failed:', (err as Error).message);
     console.warn('[lakebase] Routes will be registered but may return errors');
@@ -66,9 +82,7 @@ export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
   appkit.server.extend((app) => {
     app.get('/api/lakebase/todos', async (_req, res) => {
       try {
-        const result = await appkit.lakebase.query(
-          'SELECT id, title, completed, url, created_at FROM app.todos ORDER BY created_at DESC'
-        );
+        const result = await appkit.lakebase.query(`SELECT ${TODO_COLUMNS} FROM app.todos ORDER BY created_at DESC`);
         res.json(result.rows);
       } catch (err) {
         console.error('Failed to list todos:', err);
@@ -84,8 +98,8 @@ export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
           return;
         }
         const result = await appkit.lakebase.query(
-          'INSERT INTO app.todos (title, url) VALUES ($1, $2) RETURNING id, title, completed, url, created_at',
-          [parsed.data.title.trim(), parsed.data.url ?? null]
+          `INSERT INTO app.todos (title, url, due_date) VALUES ($1, $2, $3) RETURNING ${TODO_COLUMNS}`,
+          [parsed.data.title.trim(), parsed.data.url ?? null, parsed.data.dueDate ?? null]
         );
         res.status(201).json(result.rows[0]);
       } catch (err) {
@@ -102,7 +116,7 @@ export async function setupSampleLakebaseRoutes(appkit: AppKitWithLakebase) {
           return;
         }
         const result = await appkit.lakebase.query(
-          'UPDATE app.todos SET completed = NOT completed WHERE id = $1 RETURNING id, title, completed, url, created_at',
+          `UPDATE app.todos SET completed = NOT completed WHERE id = $1 RETURNING ${TODO_COLUMNS}`,
           [id]
         );
         if (result.rows.length === 0) {
