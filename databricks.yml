@@ -77,6 +77,10 @@ targets:
   preview:
     workspace:
       host: https://data-ai-lakehouse.cloud.databricks.com
+      # Isolate each PR's bundle state (and its deploy lock) under its own path.
+      # The default path is shared by target, so without this every preview PR
+      # would contend on one lock and overwrite each other's tracked resources.
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/preview/pr-${var.pr_number}
 
     variables:
       postgres_branch: projects/appkit-lakebase-db/branches/pr-${var.pr_number}
