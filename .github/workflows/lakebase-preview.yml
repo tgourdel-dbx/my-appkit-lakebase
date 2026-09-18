@@ -196,10 +196,16 @@ jobs:
           # Runs as the CI SP, which holds ADMIN OPTION on app_schema_owner — no
           # superuser needed. Idempotent: re-granting an existing membership is a
           # no-op.
+          #
+          # The role name is embedded directly (double-quoted identifier) rather
+          # than via psql's :"var" interpolation: a `-c` string that fully parses
+          # as SQL is sent to the server verbatim, so psql never expands :"sp".
+          # PREVIEW_SP is a service-principal UUID (hex + hyphens), so quoting it
+          # as an identifier is safe.
           PGPASSWORD="$TOKEN" psql \
             "host=${HOST} port=5432 user=${DATABRICKS_CLIENT_ID} dbname=${PGDB} sslmode=require" \
-            -v ON_ERROR_STOP=1 -v sp="$PREVIEW_SP" \
-            -c 'GRANT app_schema_owner TO :"sp";'
+            -v ON_ERROR_STOP=1 \
+            -c "GRANT app_schema_owner TO \"${PREVIEW_SP}\";"
 
       - name: Restart preview app so it picks up schema access
         shell: bash

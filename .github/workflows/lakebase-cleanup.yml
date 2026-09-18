@@ -6,14 +6,16 @@ name: Cleanup Lakebase Branch
 #   - the preview Lakebase branch (pr-<number>), cloned from production by that
 #     same workflow;
 #   - the per-worktree Lakebase branch that the local Claude session created
-#     from the Git branch name (see scripts/branch-name.sh).
+#     from the Git branch name (see scripts/branch-name.sh);
+#   - the PR's Git head branch on GitHub (on both merge AND close — the native
+#     "automatically delete head branches" setting only fires on merge).
 on:
   pull_request:
     types:
       - closed
 
 permissions:
-  contents: read
+  contents: write   # required to delete the PR head branch
 
 jobs:
   cleanup:
@@ -79,3 +81,22 @@ jobs:
               echo "Lakebase branch already deleted: $BRANCH_ID"
             fi
           done
+
+      - name: Delete the PR head branch
+        # Only same-repo branches (a fork's branch can't be deleted from here),
+        # and never the default branch.
+        if: >-
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.event.pull_request.head.ref != github.event.repository.default_branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        shell: bash
+        run: |
+          if gh api "repos/${REPO}/git/refs/heads/${HEAD_REF}" >/dev/null 2>&1; then
+            echo "Deleting Git branch: $HEAD_REF"
+            gh api -X DELETE "repos/${REPO}/git/refs/heads/${HEAD_REF}"
+          else
+            echo "Git branch already deleted: $HEAD_REF"
+          fi
