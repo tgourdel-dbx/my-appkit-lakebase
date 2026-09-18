@@ -1,5 +1,12 @@
 @import "@databricks/appkit-ui/styles.css";
 
+/* Increase the base font size for improved readability. Tailwind's rem-based
+   sizing scales off the root font-size, so this bumps the whole app
+   proportionally (18px base instead of the 16px browser default). */
+html {
+  font-size: 112.5%;
+}
+
 :root {
   /* --radius: 0.625rem;
   --background: oklch(1 0 0);
