@@ -95,16 +95,39 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Resolve preview connection
+        id: conn
+        shell: bash
+        env:
+          BRANCH_RESOURCE: ${{ steps.preview.outputs.branch_resource }}
+        run: |
+          set -euo pipefail
+          # createLakebasePool needs the ENDPOINT resource path (not a database
+          # path) plus the endpoint host and the real Postgres database name.
+          EP="${BRANCH_RESOURCE}/endpoints/primary"
+          HOST="$(databricks postgres get-endpoint "$EP" -o json | jq -r '.status.hosts.host')"
+          PGDB="$(databricks postgres get-database \
+            "${BRANCH_RESOURCE}/databases/${LAKEBASE_DATABASE_ID}" -o json \
+            | jq -r '.status.postgres_database // "databricks_postgres"')"
+          if [[ -z "$HOST" || "$HOST" == "null" ]]; then
+            echo "Could not resolve the preview endpoint host." >&2
+            exit 1
+          fi
+          echo "endpoint=$EP" >> "$GITHUB_OUTPUT"
+          echo "host=$HOST" >> "$GITHUB_OUTPUT"
+          echo "pgdb=$PGDB" >> "$GITHUB_OUTPUT"
+
       - name: Run database migrations (only if the PR ships a migrate script)
         shell: bash
         env:
           # @databricks/lakebase resolves the connection from these plus the
           # OAuth M2M env above; it refreshes the DB token automatically.
-          PGHOST: ${{ vars.PGHOST }}
+          PGHOST: ${{ steps.conn.outputs.host }}
           PGPORT: "5432"
           PGSSLMODE: require
-          PGDATABASE: ${{ env.LAKEBASE_DATABASE_ID }}
-          LAKEBASE_ENDPOINT: ${{ steps.preview.outputs.branch_resource }}/databases/${{ env.LAKEBASE_DATABASE_ID }}
+          PGDATABASE: ${{ steps.conn.outputs.pgdb }}
+          PGUSER: ${{ vars.DATABRICKS_CLIENT_ID }}
+          LAKEBASE_ENDPOINT: ${{ steps.conn.outputs.endpoint }}
         run: |
           if npm run 2>/dev/null | grep -qE '^  migrate$'; then
             echo "migrate script found — applying migrations to ${{ steps.preview.outputs.lakebase_branch }}"
