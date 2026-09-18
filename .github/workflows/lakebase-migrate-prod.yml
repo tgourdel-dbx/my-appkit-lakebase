@@ -77,6 +77,13 @@ jobs:
         run: |
           set -euo pipefail
           if npm run 2>/dev/null | grep -qE '^  migrate$'; then
+            # Fast-fail if the lockfile points at the internal npm proxy, which
+            # CI cannot reach (npm ci would otherwise hang). Fix with
+            # `npm run lockfile:fix` and commit.
+            if grep -q 'npm-proxy.dev.databricks.com' package-lock.json; then
+              echo "::error::package-lock.json references npm-proxy.dev.databricks.com (unreachable from CI). Run 'npm run lockfile:fix' and commit." >&2
+              exit 1
+            fi
             echo "Applying pending migrations to the production branch"
             npm ci
             npm run migrate

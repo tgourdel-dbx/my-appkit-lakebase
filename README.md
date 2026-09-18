@@ -82,6 +82,13 @@ databricks bundle deploy --profile production
 npm install
 ```
 
+> **Adding or updating a dependency?** If you install through the internal
+> `npm-proxy.dev.databricks.com` mirror, npm bakes that host into
+> `package-lock.json`, which GitHub-hosted CI cannot reach (`npm ci` hangs, then
+> `ETIMEDOUT`). After changing dependencies, run `npm run lockfile:fix` to
+> normalize the committed lockfile back to the public registry, and commit it.
+> CI fast-fails with a clear message if an internal-proxy URL slips through.
+
 ### Development
 
 Run the app in development mode with hot reload:
@@ -357,8 +364,10 @@ databricks permissions update database-projects appkit-lakebase-db --json '{
 | Variable  | `DATABRICKS_HOST`          | Workspace URL                                  |
 | Variable  | `DATABRICKS_CLIENT_ID`     | Service principal client id                    |
 | Variable  | `LAKEBASE_PROJECT_ID`      | Lakebase project (e.g. `appkit-lakebase-db`)   |
-| Variable  | `PGHOST`                   | Postgres host (only needed for the migrate step) |
 | Secret    | `DATABRICKS_CLIENT_SECRET` | Service principal OAuth secret                 |
+
+(The migrate step resolves the Postgres host/endpoint/database from the branch
+at runtime, so no `PGHOST` variable is needed.)
 
 **5. Grant the app access to its schema — once, on `production`.** A preview app
 connects with `CAN_CONNECT_AND_CREATE`, but the `app` and `appkit` schemas it

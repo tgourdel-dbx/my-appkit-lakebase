@@ -98,21 +98,41 @@ jobs:
       - name: Run database migrations (only if the PR ships a migrate script)
         shell: bash
         env:
-          # @databricks/lakebase resolves the connection from these plus the
-          # OAuth M2M env above; it refreshes the DB token automatically.
-          PGHOST: ${{ vars.PGHOST }}
-          PGPORT: "5432"
-          PGSSLMODE: require
-          PGDATABASE: ${{ env.LAKEBASE_DATABASE_ID }}
-          LAKEBASE_ENDPOINT: ${{ steps.preview.outputs.branch_resource }}/databases/${{ env.LAKEBASE_DATABASE_ID }}
+          BRANCH_RESOURCE: ${{ steps.preview.outputs.branch_resource }}
+          LAKEBASE_BRANCH: ${{ steps.preview.outputs.lakebase_branch }}
         run: |
-          if npm run 2>/dev/null | grep -qE '^  migrate$'; then
-            echo "migrate script found — applying migrations to ${{ steps.preview.outputs.lakebase_branch }}"
-            npm ci
-            npm run migrate
-          else
+          set -euo pipefail
+          if ! npm run 2>/dev/null | grep -qE '^  migrate$'; then
             echo "No migrate script in this PR — skipping migrations."
+            exit 0
           fi
+
+          # Fast-fail if the committed lockfile points at the internal npm proxy,
+          # which GitHub-hosted runners cannot reach (npm ci would otherwise hang
+          # and eventually ETIMEDOUT). Fix: `npm run lockfile:fix` and commit.
+          if grep -q 'npm-proxy.dev.databricks.com' package-lock.json; then
+            echo "::error::package-lock.json references npm-proxy.dev.databricks.com (unreachable from CI). Run 'npm run lockfile:fix' and commit." >&2
+            exit 1
+          fi
+
+          # Resolve THIS branch's Postgres connection. Each branch has its own
+          # endpoint host, so a static PGHOST won't work; @databricks/lakebase
+          # needs the ENDPOINT path (not the database path), and the real
+          # Postgres database name is databricks_postgres (underscore), not the
+          # UC resource id databricks-postgres.
+          EP="$(databricks postgres list-endpoints "$BRANCH_RESOURCE" -o json \
+            | jq -r 'if type=="array" then . else (.endpoints // []) end
+                     | (map(select((.spec.type // .type)=="ENDPOINT_TYPE_READ_WRITE")) | .[0].name)
+                       // .[0].name')"
+          HOST="$(databricks postgres get-endpoint "$EP" -o json | jq -r '.status.hosts.host')"
+          PGDB="$(databricks postgres get-database "${BRANCH_RESOURCE}/databases/databricks-postgres" -o json \
+            | jq -r '.status.postgres_database // "databricks_postgres"')"
+
+          echo "Applying migrations to ${LAKEBASE_BRANCH}"
+          npm ci
+          PGHOST="$HOST" PGPORT=5432 PGSSLMODE=require PGDATABASE="$PGDB" \
+            PGUSER="$DATABRICKS_CLIENT_ID" LAKEBASE_ENDPOINT="$EP" \
+            npm run migrate
 
       - name: Deploy preview app
         shell: bash
