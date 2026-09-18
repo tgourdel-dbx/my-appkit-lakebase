@@ -1,19 +1,35 @@
 import { Card, CardContent, CardHeader, CardTitle, Button, Input, Skeleton } from '@databricks/appkit-ui/react';
 import { useState, useEffect } from 'react';
-import { Check, X, ExternalLink } from 'lucide-react';
+import { Check, X, ExternalLink, CalendarClock } from 'lucide-react';
 
 interface Todo {
   id: number;
   title: string;
   completed: boolean;
   url: string | null;
+  due_date: string | null;
   created_at: string;
+}
+
+// Today as a local YYYY-MM-DD string, for comparing against due dates (which
+// are plain calendar dates with no time component).
+function todayISO(): string {
+  const now = new Date();
+  const offsetMs = now.getTimezoneOffset() * 60_000;
+  return new Date(now.getTime() - offsetMs).toISOString().slice(0, 10);
+}
+
+function formatDueDate(due: string): string {
+  // Parse as local date (append time) so the label doesn't shift by a day.
+  const date = new Date(`${due}T00:00:00`);
+  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 export function LakebasePage() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [newTitle, setNewTitle] = useState('');
   const [newUrl, setNewUrl] = useState('');
+  const [newDueDate, setNewDueDate] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -34,19 +50,21 @@ export function LakebasePage() {
     const title = newTitle.trim();
     if (!title) return;
     const url = newUrl.trim();
+    const dueDate = newDueDate.trim();
 
     setSubmitting(true);
     try {
       const res = await fetch('/api/lakebase/todos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(url ? { title, url } : { title }),
+        body: JSON.stringify({ title, ...(url ? { url } : {}), ...(dueDate ? { due_date: dueDate } : {}) }),
       });
       if (!res.ok) throw new Error(`Failed to create todo: ${res.statusText}`);
       const created = (await res.json()) as Todo;
       setTodos((prev) => [created, ...prev]);
       setNewTitle('');
       setNewUrl('');
+      setNewDueDate('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add todo');
     } finally {
@@ -108,6 +126,18 @@ export function LakebasePage() {
               onChange={(e) => setNewUrl(e.target.value)}
               disabled={submitting}
             />
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <CalendarClock className="h-4 w-4 shrink-0" />
+              <span className="shrink-0">Due date (optional)</span>
+              <Input
+                type="date"
+                value={newDueDate}
+                onChange={(e) => setNewDueDate(e.target.value)}
+                disabled={submitting}
+                className="flex-1"
+                aria-label="Due date (optional)"
+              />
+            </label>
           </form>
 
           {error && <div className="text-destructive bg-destructive/10 p-3 rounded-md mb-4">{error}</div>}
@@ -149,6 +179,23 @@ export function LakebasePage() {
 
                   <div className="flex-1 min-w-0">
                     <span className={todo.completed ? 'line-through text-muted-foreground' : ''}>{todo.title}</span>
+                    {todo.due_date &&
+                      (() => {
+                        const overdue = !todo.completed && todo.due_date < todayISO();
+                        return (
+                          <span
+                            className={`flex items-center gap-1 text-xs ${
+                              overdue ? 'text-destructive font-medium' : 'text-muted-foreground'
+                            }`}
+                          >
+                            <CalendarClock className="h-3 w-3 shrink-0" />
+                            <span>
+                              Due {formatDueDate(todo.due_date)}
+                              {overdue && ' · overdue'}
+                            </span>
+                          </span>
+                        );
+                      })()}
                     {todo.url && (
                       <a
                         href={todo.url}
