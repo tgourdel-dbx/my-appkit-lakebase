@@ -227,8 +227,19 @@ echo "$LAKEBASE_BRANCH"  # -> feat-add-charts (must be set)
 #    the migration together with the application code.
 ```
 
-Never apply migrations to `production`, and never delete Lakebase branches by
-hand — cleanup is automated (see step 5).
+Never apply migrations to `production` by hand, and never delete Lakebase
+branches manually — both are automated (production migration below; cleanup in
+step 5).
+
+**Production stays in sync automatically.** When migrations land on `main` (i.e.
+a PR merges), the **Migrate Lakebase Production** workflow
+([`.github/workflows/lakebase-migrate-prod.yml`](.github/workflows/lakebase-migrate-prod.yml))
+runs `npm run migrate` against the `production` branch. This is essential:
+because every `pr-<n>` preview branch is a clone of `production`, a merged
+schema change that never reached `production` would be missing from all future
+previews. The workflow runs as the CI service principal, which must be able to
+apply migrations to the production schema (see the one-time setup in step 4 of
+the preview section).
 
 ### 3. Open and iterate on a pull request
 
