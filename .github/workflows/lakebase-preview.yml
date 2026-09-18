@@ -54,6 +54,14 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - uses: databricks/setup-cli@main
+        with:
+          # Pin the CLI instead of floating on latest. v1.16.0/v1.17.0
+          # regressed the direct deploy engine with a nil-pointer panic while
+          # planning App resources (dresources/app.go OverrideChangeDesc),
+          # which broke every preview deploy. v1.15.0 is the last release
+          # before that regression. Revisit once the direct-engine bug ships
+          # a fix upstream.
+          version: 1.15.0
 
       - name: Resolve preview identifiers
         id: preview
