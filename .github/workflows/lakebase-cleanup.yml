@@ -35,6 +35,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: databricks/setup-cli@main
+        with:
+          version: 1.17.0
 
       - name: Delete preview app
         shell: bash

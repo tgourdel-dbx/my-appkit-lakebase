@@ -55,7 +55,9 @@ jobs:
 
       - uses: databricks/setup-cli@main
         with:
-          version: 1.13.0
+          # Pin >= the version that owns the bundle's direct-engine state.
+          # Downgrading (e.g. to 1.13.0) makes the CLI panic reading newer state.
+          version: 1.17.0
 
       - name: Resolve preview identifiers
         id: preview
