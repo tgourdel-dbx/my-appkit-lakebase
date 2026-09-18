@@ -11,6 +11,10 @@ A Databricks App powered by [AppKit](https://developers.databricks.com/docs/appk
 - Node.js v22+ and npm
 - Databricks CLI (for deployment)
 - Access to a Databricks workspace
+- For the per-PR preview pipeline: a CI service principal with the
+  `workspace-access` entitlement, `CAN_MANAGE` on the Lakebase project, and
+  `databricks_superuser` membership, plus the GitHub Actions variables/secrets
+  — see [One-time setup for the preview pipeline](#one-time-setup-for-the-preview-pipeline).
 
 ## Databricks Authentication
 
@@ -296,8 +300,46 @@ For a PR numbered `123`, the workflow:
 4. **Comments the preview URL** back on the PR (upserting a single comment as
    new commits are pushed).
 
-The workflow authenticates as a Databricks service principal via OAuth M2M,
-using repository/organization Actions **variables** and **secrets**:
+#### One-time setup for the preview pipeline
+
+The preview and cleanup workflows run unattended, so they authenticate as a
+**Databricks service principal** via OAuth M2M. Before the first preview can
+run, complete these one-time steps (each is done once, not per PR).
+
+**1. Create the CI service principal.** In the workspace, create (or reuse) a
+service principal and generate an **OAuth secret** (client id + secret). This
+is the identity all preview/cleanup runs act as.
+
+**2. Grant it the `workspace-access` entitlement.** Settings → *Identity and
+access* → *Service principals* → your SP → *Entitlements* → enable **Workspace
+access**. Without it, Lakebase API calls fail with *"This API is disabled for
+users without the workspace-access entitlement."* CLI equivalent:
+
+```bash
+databricks service-principals patch <SP_SCIM_ID> --json '{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+  "Operations": [{ "op": "add", "path": "entitlements", "value": [{ "value": "workspace-access" }] }]
+}'
+```
+
+**3. Give it access on the Lakebase (Postgres) project.** The SP must be able
+to create and delete branches on the `appkit-lakebase-db` project, which
+requires **Can Manage** on the project. Add it in the project's permissions UI,
+or via CLI:
+
+```bash
+databricks permissions update database-projects appkit-lakebase-db --json '{
+  "access_control_list": [
+    { "service_principal_name": "<SP_CLIENT_ID>", "permission_level": "CAN_MANAGE" }
+  ]
+}'
+```
+
+> `CAN_MANAGE` is the control-plane permission to manage branches. The SP also
+> needs an in-database `databricks_superuser` role so the workflow can transfer
+> schema ownership to each preview app — that's step 5 below.
+
+**4. Configure GitHub Actions variables & secrets** (repository or org level):
 
 | Kind      | Name                       | Purpose                                        |
 | --------- | -------------------------- | ---------------------------------------------- |
@@ -306,6 +348,43 @@ using repository/organization Actions **variables** and **secrets**:
 | Variable  | `LAKEBASE_PROJECT_ID`      | Lakebase project (e.g. `appkit-lakebase-db`)   |
 | Variable  | `PGHOST`                   | Postgres host (only needed for the migrate step) |
 | Secret    | `DATABRICKS_CLIENT_SECRET` | Service principal OAuth secret                 |
+
+**5. Let the CI service principal transfer schema ownership.** Every Databricks
+App runs as its **own** service principal, and each `pr-<n>` branch is a clone
+of `production` whose `app` and `appkit` schemas (and their tables) are owned by
+whoever owns them in production — not by the preview app's SP. This template's
+app also **evolves its own schema at startup** (`CREATE TABLE` /
+`ALTER TABLE … ADD COLUMN` in `server/routes/lakebase/todo-routes.ts`), which
+requires **table ownership**. A preview app that doesn't own the cloned schema
+fails with `permission denied for schema` / `must be owner of table`.
+
+So the preview workflow transfers ownership of the `app` and `appkit` schemas
+to each preview app's SP right after deploy (the *Give preview app ownership of
+its schemas* step), then restarts the app. Reassigning ownership across roles
+requires **superuser**, so the CI service principal must be a member of the
+`databricks_superuser` Postgres role. Grant it **once** on the `production`
+branch so every clone inherits it (creating the SP's Postgres role at the same
+time):
+
+```bash
+databricks postgres create-role projects/appkit-lakebase-db/branches/production \
+  --role-id <SP_CLIENT_ID> \
+  --json '{"spec":{"identity_type":"SERVICE_PRINCIPAL","postgres_role":"<SP_CLIENT_ID>","auth_method":"LAKEBASE_OAUTH_V1","membership_roles":["DATABRICKS_SUPERUSER"]}}'
+```
+
+Verify:
+
+```bash
+databricks postgres list-roles projects/appkit-lakebase-db/branches/production -o json \
+  | jq -r '.[] | [.role_id, (.status.membership_roles // [] | join(","))] | @tsv'
+```
+
+> Trade-off: the CI service principal can act as a superuser on any branch it
+> can connect to (including `production`), not just ephemeral preview branches.
+> Its OAuth secret lives in GitHub Actions, so treat it accordingly. The
+> alternative — a best-practice migrations-driven schema where the app never
+> owns its tables — avoids this but requires reworking the app to stop evolving
+> its schema at startup.
 
 ### 5. Cleanup happens automatically
 
