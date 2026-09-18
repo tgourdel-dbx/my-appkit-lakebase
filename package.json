@@ -17,6 +17,8 @@
     "format:fix": "prettier --write .",
     "test": "vitest run",
     "migrate": "node scripts/migrate.js",
+    "lockfile:fix": "node scripts/normalize-lockfile.js",
+    "lockfile:check": "node scripts/normalize-lockfile.js --check",
     "clean": "rm -rf client/dist dist build node_modules",
     "prebuild": "npm run sync && npm run typegen -- --wait",
     "predev": "npm run sync && npm run typegen",

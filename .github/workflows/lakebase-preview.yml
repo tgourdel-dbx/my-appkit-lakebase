@@ -53,6 +53,17 @@ jobs:
           # Check out the PR head so migrations and the deploy use its code.
           ref: ${{ github.event.pull_request.head.sha }}
 
+      # Fail fast (seconds) if the lockfile pins internal-proxy URLs that CI
+      # cannot reach — otherwise `npm ci` in the migrate step times out after
+      # many minutes with an opaque error. See .npmrc / scripts/normalize-lockfile.js.
+      - name: Guard against internal registry hosts in the lockfile
+        shell: bash
+        run: |
+          if grep -q 'npm-proxy\.dev\.databricks\.com' package-lock.json; then
+            echo "::error::package-lock.json contains internal npm proxy URLs (npm-proxy.dev.databricks.com) that GitHub-hosted runners cannot reach. Run 'npm run lockfile:fix' and commit the result."
+            exit 1
+          fi
+
       - uses: databricks/setup-cli@main
 
       - name: Resolve preview identifiers

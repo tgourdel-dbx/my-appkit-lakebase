@@ -38,6 +38,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Fail fast if the lockfile pins internal-proxy URLs that CI cannot reach
+      # (see .npmrc / scripts/normalize-lockfile.js).
+      - name: Guard against internal registry hosts in the lockfile
+        shell: bash
+        run: |
+          if grep -q 'npm-proxy\.dev\.databricks\.com' package-lock.json; then
+            echo "::error::package-lock.json contains internal npm proxy URLs (npm-proxy.dev.databricks.com) that GitHub-hosted runners cannot reach. Run 'npm run lockfile:fix' and commit the result."
+            exit 1
+          fi
+
       - uses: databricks/setup-cli@main
 
       - uses: actions/setup-node@v4
