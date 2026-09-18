@@ -154,7 +154,7 @@ from the branch at runtime, so no `PGHOST` variable is needed.
 This is the subtle part. Each Databricks App runs as its *own* auto-created SP,
 and each preview app doesn't just read and write the `app`/`appkit` schemas — it
 *evolves* them at startup (`CREATE TABLE` / `ALTER TABLE … ADD COLUMN` in
-[`todo-routes.ts`](server/routes/lakebase/todo-routes.ts)), which requires
+[`todo-routes.ts`](app/server/routes/lakebase/todo-routes.ts)), which requires
 ownership. Lakebase has no true superuser, so ownership can't be handed to each
 ephemeral app SP directly. Instead, a shared role owns the schemas and each app
 SP is made a member.
@@ -193,23 +193,37 @@ member of the owning role, with `INHERIT` — can run its startup DDL and its
 reads and writes. Migrations keep the schema *current*; this role is what lets
 the app *own* it.
 
+## Repository layout
+
+The application (React client, Express server, `package.json`, `app.yaml`, and
+all build/tooling config) lives under **`app/`**, which is the working directory
+for every npm/AppKit command. The repository root holds the SDLC machinery: the
+GitHub Actions workflows (`.github/`), the worktree/Lakebase hook and helpers
+(`.claude/`, `scripts/`), and the Databricks bundle (`databricks.yml`). The
+bundle stays at the root and points each target's `git_source.source_code_path`
+at `app/`, so Databricks deploys the app from that subdirectory.
+
 ## Running locally
 
+Run app commands from `app/`:
+
 ```bash
+cd app
 npm install       # after changing deps, run `npm run lockfile:fix` (below)
 npm run dev       # hot-reload dev server
 npm run build     # client + server production build
 npm start         # run the production build
 ```
 
-Quality gates: `npm run typecheck`, `npm run lint` (`:fix`), `npm run format`
-(`:fix`).
+Quality gates (also from `app/`): `npm run typecheck`, `npm run lint` (`:fix`),
+`npm run format` (`:fix`).
 
 Lakebase connectivity needs the environment described in the
 [Lakebase plugin docs](https://developers.databricks.com/docs/appkit/v0/plugins/lakebase);
-copy `.env.example` to `.env` to configure it. The CLI deploys via Databricks
-Asset Bundles (`databricks bundle deploy` / `databricks apps deploy`); the
-`default` target is production and `preview` is the per-PR target driven by CI.
+copy `app/.env.example` to `app/.env` to configure it. Deployment runs from the
+repo root via Databricks Asset Bundles (`databricks bundle deploy` /
+`databricks apps deploy`); the `default` target is production and `preview` is
+the per-PR target driven by CI.
 
 > **Dependency changes:** installing through the internal
 > `npm-proxy.dev.databricks.com` mirror bakes that host into

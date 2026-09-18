@@ -7,8 +7,8 @@
 .isaac/
 
 node_modules/
-client/dist/
-dist/
+app/client/dist/
+app/dist/
 build/
 .env
 .env.local
@@ -19,5 +19,5 @@ test-results/
 playwright-report/
 
 # Auto-generated types (endpoint-specific, varies per developer)
-shared/appkit-types/serving.d.ts
+app/shared/appkit-types/serving.d.ts
 

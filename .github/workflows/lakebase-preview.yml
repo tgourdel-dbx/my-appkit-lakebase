@@ -98,9 +98,14 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          # The app (package.json / lockfile) lives in app/.
+          cache-dependency-path: app/package-lock.json
 
       - name: Run database migrations (only if the PR ships a migrate script)
         shell: bash
+        # npm and the lockfile live in the app/ subdirectory. The databricks
+        # CLI calls below are cwd-independent, so running them from app/ is fine.
+        working-directory: app
         env:
           BRANCH_RESOURCE: ${{ steps.preview.outputs.branch_resource }}
           LAKEBASE_BRANCH: ${{ steps.preview.outputs.lakebase_branch }}

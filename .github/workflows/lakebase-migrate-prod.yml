@@ -10,9 +10,9 @@ on:
   push:
     branches: [main]
     paths:
-      - 'migrations/**'
-      - 'scripts/migrate.js'
-      - 'package.json'
+      - 'app/migrations/**'
+      - 'app/scripts/migrate.js'
+      - 'app/package.json'
 
 # Never run two production migrations concurrently.
 concurrency:
@@ -46,6 +46,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          # The app (package.json / lockfile) lives in app/.
+          cache-dependency-path: app/package-lock.json
 
       - name: Resolve production connection
         id: prod
@@ -67,6 +69,8 @@ jobs:
 
       - name: Apply migrations to production
         shell: bash
+        # npm and the lockfile live in the app/ subdirectory.
+        working-directory: app
         env:
           # @databricks/lakebase resolves the connection from these plus the
           # OAuth M2M env above, refreshing the short-lived DB token itself.

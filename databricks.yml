@@ -49,6 +49,8 @@ targets:
             url: https://github.com/tgourdel-dbx/my-appkit-lakebase.git
           git_source:
             branch: main
+            # The app's code lives in the app/ subdirectory of the repo.
+            source_code_path: app
 
           # NOTE: `lifecycle.started` is only supported by the direct deployment
           # engine (CLI v1.14.0+). To stay engine-agnostic, the app is started
@@ -99,6 +101,8 @@ targets:
             url: https://github.com/tgourdel-dbx/my-appkit-lakebase.git
           git_source:
             branch: ${var.git_branch}
+            # The app's code lives in the app/ subdirectory of the repo.
+            source_code_path: app
 
           # Started explicitly by the workflow (`databricks bundle run app
           # -t preview`); see the note on the production app above.

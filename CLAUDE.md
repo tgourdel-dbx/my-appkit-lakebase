@@ -81,10 +81,13 @@ When finished:
 
 ## Before completion
 
-Run the project's standard checks:
+The application lives in the `app/` directory — run all npm/AppKit commands from
+there (`cd app`). The Databricks bundle (`databricks.yml`) stays at the repo
+root, so run `databricks` bundle/app commands from the root. Run the project's
+standard checks:
 
-    npm run typecheck
-    npm run lint
+    (cd app && npm run typecheck)
+    (cd app && npm run lint)
     databricks apps validate --profile <PROFILE>
 
 Review:
@@ -109,8 +112,8 @@ opened, each branch's 30-day TTL reclaims it as a backstop.
 
 This project uses Databricks AppKit packages. For AI assistant guidance on using these packages, refer to:
 
-- **@databricks/appkit** (Backend SDK): [./node_modules/@databricks/appkit/CLAUDE.md](./node_modules/@databricks/appkit/CLAUDE.md)
-- **@databricks/appkit-ui** (UI Integration, Charts, Tables, SSE, and more.): [./node_modules/@databricks/appkit-ui/CLAUDE.md](./node_modules/@databricks/appkit-ui/CLAUDE.md)
+- **@databricks/appkit** (Backend SDK): [./app/node_modules/@databricks/appkit/CLAUDE.md](./app/node_modules/@databricks/appkit/CLAUDE.md)
+- **@databricks/appkit-ui** (UI Integration, Charts, Tables, SSE, and more.): [./app/node_modules/@databricks/appkit-ui/CLAUDE.md](./app/node_modules/@databricks/appkit-ui/CLAUDE.md)
 
 ### Databricks Skills
 
