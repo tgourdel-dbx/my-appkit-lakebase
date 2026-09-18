@@ -131,11 +131,14 @@ jobs:
         run: |
           if npm run 2>/dev/null | grep -qE '^  migrate$'; then
             echo "migrate script found — applying migrations to ${{ steps.preview.outputs.lakebase_branch }}"
+            # The npm 10 bundled with Node 22 hangs on `npm ci` for this
+            # lockfile and dies with "Exit handler never called" (npm/cli#4028);
+            # npm 11 installs it cleanly (~8s). Upgrade npm before installing.
+            npm install -g npm@11 --no-audit --no-fund
             # --ignore-scripts: migrations only need node-pg-migrate + pg +
-            # @databricks/lakebase, none of which require lifecycle scripts.
-            # Skipping them avoids the app toolchain's install-script hooks
-            # (esbuild/protobufjs/appkit), which stall in this minimal CI step.
-            npm ci --ignore-scripts
+            # @databricks/lakebase (all pure JS), so skip the app toolchain's
+            # unnecessary lifecycle hooks for a faster install.
+            npm ci --ignore-scripts --no-audit --no-fund
             npm run migrate
           else
             echo "No migrate script in this PR — skipping migrations."
