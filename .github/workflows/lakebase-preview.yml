@@ -116,8 +116,16 @@ jobs:
 
       - name: Deploy preview app
         shell: bash
+        env:
+          # The direct deploy engine (CLI default since v1.x) panics while
+          # planning the App resource (SIGSEGV in dresources/app.go
+          # OverrideChangeDesc). Pin the still-supported Terraform engine
+          # until the direct-engine App bug is fixed upstream.
+          DATABRICKS_BUNDLE_ENGINE: terraform
         run: |
-          databricks bundle deploy -t preview \
+          # --force-lock reclaims a stale deploy lock left behind by a
+          # previously crashed run so reruns aren't blocked on it.
+          databricks bundle deploy -t preview --force-lock \
             --var "pr_number=${PR_NUMBER}" \
             --var "git_branch=${GIT_BRANCH}"
 
