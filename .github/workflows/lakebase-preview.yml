@@ -144,7 +144,11 @@ jobs:
       - name: Deploy preview app
         shell: bash
         run: |
-          databricks bundle deploy -t preview \
+          # --force-lock: this job has `concurrency: cancel-in-progress`, so a
+          # superseded or crashed deploy can leave a stale deployment lock on
+          # the shared `preview` target state. There is never a legitimate
+          # concurrent deploy for the same PR, so overriding the lock is safe.
+          databricks bundle deploy -t preview --force-lock \
             --var "pr_number=${PR_NUMBER}" \
             --var "git_branch=${GIT_BRANCH}"
 
