@@ -55,12 +55,14 @@ jobs:
 
       - uses: databricks/setup-cli@main
         with:
-          # Pin the CLI instead of floating on latest. v1.16.0/v1.17.0
-          # regressed the direct deploy engine with a nil-pointer panic while
-          # planning App resources (dresources/app.go OverrideChangeDesc),
-          # which broke every preview deploy. v1.15.0 is the last release
-          # before that regression. Revisit once the direct-engine bug ships
-          # a fix upstream.
+          # Pin the CLI instead of floating on latest so preview deploys are
+          # reproducible. The direct deploy engine (CLI default since v1.x)
+          # nil-pointer panics while planning a rename of the shared-state App
+          # resource (dresources/app.go OverrideChangeDesc), so we force the
+          # Terraform engine (see the deploy step). This pin is a version that
+          # still ships the Terraform engine, which is deprecated and slated
+          # for removal on latest; revisit once the direct-engine App bug is
+          # fixed upstream.
           version: 1.15.0
 
       - name: Resolve preview identifiers
