@@ -64,6 +64,17 @@ export default tseslint.config(
     },
   },
 
+  // Node.js runtime globals for standalone scripts (e.g. the migration runner).
+  {
+    files: ['scripts/**/*.js'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+      },
+    },
+  },
+
   // Disable type-checking for JS config files and standalone config files
   {
     files: ['**/*.js', '*.config.ts', '**/*.config.ts'],

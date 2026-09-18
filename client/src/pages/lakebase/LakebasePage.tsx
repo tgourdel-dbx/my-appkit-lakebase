@@ -1,19 +1,43 @@
 import { Card, CardContent, CardHeader, CardTitle, Button, Input, Skeleton } from '@databricks/appkit-ui/react';
 import { useState, useEffect } from 'react';
-import { Check, X, ExternalLink } from 'lucide-react';
+import { Check, X, ExternalLink, CalendarClock } from 'lucide-react';
 
 interface Todo {
   id: number;
   title: string;
   completed: boolean;
   url: string | null;
+  due_date: string | null;
   created_at: string;
+}
+
+// Format an ISO date (YYYY-MM-DD) for display without timezone drift.
+function formatDueDate(due: string): string {
+  const [year, month, day] = due.split('-').map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+// A todo is overdue when it has a due date strictly before today and is not
+// yet completed. Compared on calendar dates (local midnight), so "today" is
+// never treated as overdue.
+function isOverdue(todo: Todo): boolean {
+  if (!todo.due_date || todo.completed) return false;
+  const [year, month, day] = todo.due_date.split('-').map(Number);
+  const due = new Date(year, month - 1, day);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return due < today;
 }
 
 export function LakebasePage() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [newTitle, setNewTitle] = useState('');
   const [newUrl, setNewUrl] = useState('');
+  const [newDueDate, setNewDueDate] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -34,19 +58,25 @@ export function LakebasePage() {
     const title = newTitle.trim();
     if (!title) return;
     const url = newUrl.trim();
+    const dueDate = newDueDate.trim();
 
     setSubmitting(true);
     try {
       const res = await fetch('/api/lakebase/todos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(url ? { title, url } : { title }),
+        body: JSON.stringify({
+          title,
+          ...(url ? { url } : {}),
+          ...(dueDate ? { due_date: dueDate } : {}),
+        }),
       });
       if (!res.ok) throw new Error(`Failed to create todo: ${res.statusText}`);
       const created = (await res.json()) as Todo;
       setTodos((prev) => [created, ...prev]);
       setNewTitle('');
       setNewUrl('');
+      setNewDueDate('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add todo');
     } finally {
@@ -108,6 +138,17 @@ export function LakebasePage() {
               onChange={(e) => setNewUrl(e.target.value)}
               disabled={submitting}
             />
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span className="shrink-0">Due date (optional)</span>
+              <Input
+                type="date"
+                aria-label="Due date (optional)"
+                value={newDueDate}
+                onChange={(e) => setNewDueDate(e.target.value)}
+                disabled={submitting}
+                className="flex-1"
+              />
+            </label>
           </form>
 
           {error && <div className="text-destructive bg-destructive/10 p-3 rounded-md mb-4">{error}</div>}
@@ -149,6 +190,19 @@ export function LakebasePage() {
 
                   <div className="flex-1 min-w-0">
                     <span className={todo.completed ? 'line-through text-muted-foreground' : ''}>{todo.title}</span>
+                    {todo.due_date && (
+                      <span
+                        className={`flex items-center gap-1 text-xs ${
+                          isOverdue(todo) ? 'text-destructive font-medium' : 'text-muted-foreground'
+                        }`}
+                      >
+                        <CalendarClock className="h-3 w-3 shrink-0" />
+                        <span>
+                          Due {formatDueDate(todo.due_date)}
+                          {isOverdue(todo) && ' — overdue'}
+                        </span>
+                      </span>
+                    )}
                     {todo.url && (
                       <a
                         href={todo.url}
