@@ -1,19 +1,39 @@
 import { Card, CardContent, CardHeader, CardTitle, Button, Input, Skeleton } from '@databricks/appkit-ui/react';
 import { useState, useEffect } from 'react';
-import { Check, X, ExternalLink } from 'lucide-react';
+import { Check, X, ExternalLink, CalendarClock } from 'lucide-react';
 
 interface Todo {
   id: number;
   title: string;
   completed: boolean;
   url: string | null;
+  due_date: string | null;
   created_at: string;
+}
+
+// Today as a YYYY-MM-DD string in the user's local timezone, for comparing
+// against a todo's calendar due date.
+function todayISO(): string {
+  const now = new Date();
+  const offsetMs = now.getTimezoneOffset() * 60_000;
+  return new Date(now.getTime() - offsetMs).toISOString().slice(0, 10);
+}
+
+// Formats a YYYY-MM-DD due date for display without applying a timezone shift.
+function formatDueDate(due: string): string {
+  const [year, month, day] = due.split('-').map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 export function LakebasePage() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [newTitle, setNewTitle] = useState('');
   const [newUrl, setNewUrl] = useState('');
+  const [newDueDate, setNewDueDate] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -34,19 +54,25 @@ export function LakebasePage() {
     const title = newTitle.trim();
     if (!title) return;
     const url = newUrl.trim();
+    const dueDate = newDueDate.trim();
 
     setSubmitting(true);
     try {
       const res = await fetch('/api/lakebase/todos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(url ? { title, url } : { title }),
+        body: JSON.stringify({
+          title,
+          ...(url ? { url } : {}),
+          ...(dueDate ? { due_date: dueDate } : {}),
+        }),
       });
       if (!res.ok) throw new Error(`Failed to create todo: ${res.statusText}`);
       const created = (await res.json()) as Todo;
       setTodos((prev) => [created, ...prev]);
       setNewTitle('');
       setNewUrl('');
+      setNewDueDate('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add todo');
     } finally {
@@ -108,6 +134,13 @@ export function LakebasePage() {
               onChange={(e) => setNewUrl(e.target.value)}
               disabled={submitting}
             />
+            <Input
+              type="date"
+              aria-label="Due date (optional)"
+              value={newDueDate}
+              onChange={(e) => setNewDueDate(e.target.value)}
+              disabled={submitting}
+            />
           </form>
 
           {error && <div className="text-destructive bg-destructive/10 p-3 rounded-md mb-4">{error}</div>}
@@ -149,6 +182,21 @@ export function LakebasePage() {
 
                   <div className="flex-1 min-w-0">
                     <span className={todo.completed ? 'line-through text-muted-foreground' : ''}>{todo.title}</span>
+                    {todo.due_date && (
+                      <span
+                        className={`flex items-center gap-1 text-xs ${
+                          !todo.completed && todo.due_date < todayISO()
+                            ? 'text-destructive font-medium'
+                            : 'text-muted-foreground'
+                        }`}
+                      >
+                        <CalendarClock className="h-3 w-3 shrink-0" />
+                        <span>
+                          Due {formatDueDate(todo.due_date)}
+                          {!todo.completed && todo.due_date < todayISO() ? ' · overdue' : ''}
+                        </span>
+                      </span>
+                    )}
                     {todo.url && (
                       <a
                         href={todo.url}
