@@ -1,6 +1,9 @@
 @import "@databricks/appkit-ui/styles.css";
 
 :root {
+  /* Bump the base font size so all rem-based sizing scales up (16px -> 18px). */
+  font-size: 112.5%;
+
   /* --radius: 0.625rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
