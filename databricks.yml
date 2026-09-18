@@ -95,8 +95,11 @@ targets:
           git_source:
             branch: ${var.git_branch}
 
-          lifecycle:
-            started: true
+          # NOTE: no `lifecycle.started` here — that field is only supported by
+          # the direct deploy engine, and the preview deploy pins the Terraform
+          # engine (see .github/workflows/lakebase-preview.yml) to avoid the
+          # direct engine's App-planning panic. The workflow starts the app
+          # explicitly with `databricks bundle run app` after deploy.
 
           resources:
             - name: postgres
